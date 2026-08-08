@@ -2,7 +2,7 @@
 
 see update progress, report bugs / make suggestions on my discord server.
 
-[![join discord](https://img.shields.io/badge/Join%20my%20Discord-5865F2?logo=discord&logoColor=white)](https://discord.gg/NNUhqjGd6b)
+[![join discord]](https://discord.gg/NNUhqjGd6b)
 
 
 ## Features
