@@ -102,8 +102,22 @@ void LogTail::run() {
                 sessionChanged = true;
             }
         }
-        if (sessionChanged && sessionCb) {
-            sessionCb(path);
+        if (sessionChanged) {
+            if (sessionCb) sessionCb(path);
+            if (!path.empty()) {
+                HANDLE f = CreateFileW(path.c_str(), GENERIC_READ,
+                                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                       nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (f != INVALID_HANDLE_VALUE) {
+                    LARGE_INTEGER sz{};
+                    if (GetFileSizeEx(f, &sz)) {
+                        uint64_t size = (uint64_t)sz.QuadPart;
+                        // Keep only last 16KB of history on start to prevent event loop flood
+                        lastSize = size > 16384 ? size - 16384 : 0;
+                    }
+                    CloseHandle(f);
+                }
+            }
         }
 
         if (!path.empty()) {
@@ -135,6 +149,7 @@ void LogTail::run() {
                             pending += buf;
                             lastSize += got;
                             size_t start = 0;
+                            std::vector<std::string> lines;
                             for (size_t i = 0; i < pending.size(); ++i) {
                                 if (pending[i] == '\n') {
                                     std::string line =
@@ -143,11 +158,14 @@ void LogTail::run() {
                                         line.back() == '\r') {
                                         line.pop_back();
                                     }
-                                    if (cb && !line.empty()) cb(line);
+                                    if (!line.empty()) {
+                                        lines.push_back(line);
+                                    }
                                     start = i + 1;
                                 }
                             }
                             pending.erase(0, start);
+                            if (cb && !lines.empty()) cb(lines);
                         }
                     }
                 }

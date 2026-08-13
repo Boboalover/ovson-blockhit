@@ -67,6 +67,9 @@ Values load() {
     v.dllSlot          = (int)regGetDword(key, L"DllSlot", 0);
     if (v.dllSlot < 0 || v.dllSlot > 2) v.dllSlot = 0;
     v.customDllPath    = regGetString(key, L"CustomDllPath");
+    v.lunarLogPath     = regGetString(key, L"LunarLogPath");
+    v.badlionLogPath   = regGetString(key, L"BadlionLogPath");
+    v.legacyBadlionLogPath = regGetString(key, L"LegacyBadlionLogPath");
     RegCloseKey(key);
     return v;
 }
@@ -84,6 +87,9 @@ void save(const Values &v) {
     regSetDword(key, L"AutoCheckUpdates", v.autoCheckUpdates ? 1 : 0);
     regSetDword(key, L"DllSlot",          (DWORD)v.dllSlot);
     regSetString(key, L"CustomDllPath",   v.customDllPath);
+    regSetString(key, L"LunarLogPath",     v.lunarLogPath);
+    regSetString(key, L"BadlionLogPath",   v.badlionLogPath);
+    regSetString(key, L"LegacyBadlionLogPath", v.legacyBadlionLogPath);
     RegCloseKey(key);
 
     applyStartWithWindows(v.startWithWindows);

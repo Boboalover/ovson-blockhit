@@ -9,7 +9,7 @@
 
 class LogTail {
 public:
-    using LineFn    = std::function<void(const std::string &line)>;
+    using LineFn    = std::function<void(const std::vector<std::string> &lines)>;
     using SessionFn = std::function<void(const std::wstring &newPath)>;
 
     LogTail();

@@ -145,55 +145,87 @@ static std::wstring writeTempDll(DWORD pid) {
   return path;
 }
 
+static HANDLE dynamicOpenProcess(DWORD access, BOOL inherit, DWORD pid) {
+  typedef HANDLE(WINAPI* fnOpenProcess)(DWORD, BOOL, DWORD);
+  char sOpenProcess[] = { 'O','p','e','n','P','r','o','c','e','s','s',0 };
+  HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
+  if (!k32) return nullptr;
+  auto pOpenProcess = (fnOpenProcess)GetProcAddress(k32, sOpenProcess);
+  if (!pOpenProcess) return nullptr;
+  return pOpenProcess(access, inherit, pid);
+}
+
 static bool loadLibraryInject(DWORD pid, const wchar_t *dllPath) {
-  DWORD access = PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
-                 PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ;
-  HANDLE proc = OpenProcess(access, FALSE, pid);
-  if (!proc)
-    return false;
+  typedef LPVOID(WINAPI* fnVirtualAllocEx)(HANDLE, LPVOID, SIZE_T, DWORD, DWORD);
+  typedef BOOL(WINAPI* fnWriteProcessMemory)(HANDLE, LPVOID, LPCVOID, SIZE_T, SIZE_T*);
+  typedef HANDLE(WINAPI* fnCreateRemoteThread)(HANDLE, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD);
+  typedef BOOL(WINAPI* fnVirtualFreeEx)(HANDLE, LPVOID, SIZE_T, DWORD);
+  typedef BOOL(WINAPI* fnGetExitCodeThread)(HANDLE, LPDWORD);
+
+  char sVirtualAllocEx[] = { 'V','i','r','t','u','a','l','A','l','l','o','c','E','x',0 };
+  char sWriteProcessMemory[] = { 'W','r','i','t','e','P','r','o','c','e','s','s','M','e','m','o','r','y',0 };
+  char sCreateRemoteThread[] = { 'C','r','e','a','t','e','R','e','m','o','t','e','T','h','r','e','a','d',0 };
+  char sVirtualFreeEx[] = { 'V','i','r','t','u','a','l','F','r','e','e','E','x',0 };
+  char sGetExitCodeThread[] = { 'G','e','t','E','x','i','t','C','o','d','e','T','h','r','e','a','d',0 };
+  char sLoadLibraryW[] = { 'L','o','a','d','L','i','b','r','a','r','y','W',0 };
 
   HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
-  FARPROC loadLib = k32 ? GetProcAddress(k32, "LoadLibraryW") : nullptr;
-  if (!loadLib) {
-    CloseHandle(proc);
+  if (!k32) return false;
+
+  auto pVirtualAllocEx = (fnVirtualAllocEx)GetProcAddress(k32, sVirtualAllocEx);
+  auto pWriteProcessMemory = (fnWriteProcessMemory)GetProcAddress(k32, sWriteProcessMemory);
+  auto pCreateRemoteThread = (fnCreateRemoteThread)GetProcAddress(k32, sCreateRemoteThread);
+  auto pVirtualFreeEx = (fnVirtualFreeEx)GetProcAddress(k32, sVirtualFreeEx);
+  auto pGetExitCodeThread = (fnGetExitCodeThread)GetProcAddress(k32, sGetExitCodeThread);
+  auto pLoadLibraryW = (LPTHREAD_START_ROUTINE)GetProcAddress(k32, sLoadLibraryW);
+
+  if (!pVirtualAllocEx || !pWriteProcessMemory || !pCreateRemoteThread ||
+      !pVirtualFreeEx || !pGetExitCodeThread || !pLoadLibraryW) {
     return false;
   }
 
+  DWORD access = PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+                 PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ;
+  HANDLE proc = dynamicOpenProcess(access, FALSE, pid);
+  if (!proc)
+    return false;
+
   SIZE_T bytes = (wcslen(dllPath) + 1) * sizeof(wchar_t);
   LPVOID remotePath =
-      VirtualAllocEx(proc, nullptr, bytes, MEM_COMMIT, PAGE_READWRITE);
+      pVirtualAllocEx(proc, nullptr, bytes, MEM_COMMIT, PAGE_READWRITE);
   if (!remotePath) {
     CloseHandle(proc);
     return false;
   }
 
   SIZE_T written = 0;
-  if (!WriteProcessMemory(proc, remotePath, dllPath, bytes, &written) ||
+  if (!pWriteProcessMemory(proc, remotePath, dllPath, bytes, &written) ||
       written != bytes) {
-    VirtualFreeEx(proc, remotePath, 0, MEM_RELEASE);
+    pVirtualFreeEx(proc, remotePath, 0, MEM_RELEASE);
     CloseHandle(proc);
     return false;
   }
 
-  HANDLE th = CreateRemoteThread(proc, nullptr, 0,
-                                 (LPTHREAD_START_ROUTINE)loadLib,
+  HANDLE th = pCreateRemoteThread(proc, nullptr, 0,
+                                 pLoadLibraryW,
                                  remotePath, 0, nullptr);
   if (!th) {
-    VirtualFreeEx(proc, remotePath, 0, MEM_RELEASE);
+    pVirtualFreeEx(proc, remotePath, 0, MEM_RELEASE);
     CloseHandle(proc);
     return false;
   }
 
   WaitForSingleObject(th, 10000);
   DWORD exitCode = 0;
-  GetExitCodeThread(th, &exitCode);
+  pGetExitCodeThread(th, &exitCode);
   CloseHandle(th);
-  VirtualFreeEx(proc, remotePath, 0, MEM_RELEASE);
+  pVirtualFreeEx(proc, remotePath, 0, MEM_RELEASE);
   CloseHandle(proc);
   return exitCode != 0;
 }
 
 bool injectPid(DWORD pid, const ProgressFn &cb) {
+  loaderLog("injectPid started for target PID=%lu", pid);
   auto step = [&](int p, const wchar_t *s) {
     if (cb)
       cb(p, std::wstring(s));
@@ -203,12 +235,15 @@ bool injectPid(DWORD pid, const ProgressFn &cb) {
 
   sweepStaleTempDlls();
 
-  HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-  if (!h)
+  HANDLE h = dynamicOpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!h) {
+    loaderLog("injectPid failed: cannot open process PID=%lu (err=%lu)", pid, GetLastError());
     return false;
+  }
   CloseHandle(h);
 
   if (isAlreadyInjected(pid)) {
+    loaderLog("injectPid: process PID=%lu is ALREADY injected. Skipping.", pid);
     step(100, L"Already injected");
     return true;
   }
@@ -216,6 +251,7 @@ bool injectPid(DWORD pid, const ProgressFn &cb) {
   step(15, L"Writing payload");
   std::wstring dllPath = writeTempDll(pid);
   if (dllPath.empty()) {
+    loaderLog("injectPid failed: writeTempDll returned empty path");
     step(100, L"Failed");
     return false;
   }
@@ -235,7 +271,7 @@ bool injectPid(DWORD pid, const ProgressFn &cb) {
     }
     g_hintEvents[pid] = hint;
     std::thread([pid, &mtxRef = s_mtx, &mapRef = g_hintEvents]() {
-      HANDLE proc = OpenProcess(SYNCHRONIZE, FALSE, pid);
+      HANDLE proc = dynamicOpenProcess(SYNCHRONIZE, FALSE, pid);
       if (!proc) return;
       WaitForSingleObject(proc, INFINITE);
       CloseHandle(proc);

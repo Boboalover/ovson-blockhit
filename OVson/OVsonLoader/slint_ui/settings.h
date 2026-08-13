@@ -9,6 +9,9 @@ struct Values {
     bool        autoCheckUpdates = true;
     int         dllSlot          = 0;
     std::wstring customDllPath;
+    std::wstring lunarLogPath;
+    std::wstring badlionLogPath;
+    std::wstring legacyBadlionLogPath;
 };
 
 Values load();

@@ -4,6 +4,13 @@ export struct LogLine {
     color: color,
 }
 
+export struct MarkdownBlock {
+    block-type: string, // "text", "link", "image", "h1"
+    content: string,    // the text or alt text
+    url: string,        // url for link/image
+    img: image,         // dynamic image data
+}
+
 export struct PRow {
     pid: int,
     title: string,
@@ -304,12 +311,14 @@ component AboutPage inherits Rectangle {
         spacing: 18px;
         alignment: center;
 
-        Image {
-            source: @image-url("ovson_logo.png");
-            image-fit: contain;
-            width: 96px;
-            height: 96px;
-            horizontal-alignment: center;
+        HorizontalLayout {
+            alignment: center;
+            Image {
+                source: @image-url("ovson_logo.png");
+                image-fit: contain;
+                width: 96px;
+                height: 96px;
+            }
         }
         Text {
             text: "OVson";
@@ -319,7 +328,7 @@ component AboutPage inherits Rectangle {
             horizontal-alignment: center;
         }
         Text {
-            text: "Bedwars overlay client · v" + build-version;
+            text: "Bedwars overlay · v" + build-version;
             color: Palette.text-dim;
             font-size: 12px;
             horizontal-alignment: center;
@@ -579,9 +588,15 @@ component SettingsPage inherits Rectangle {
     in-out property <bool> auto-check-updates: true;
     in-out property <int>  dll-slot: 0;
     in property <string>   custom-dll-path: "";
+    in-out property <string> lunar-log-path: "";
+    in-out property <string> badlion-log-path: "";
+    in-out property <string> legacy-badlion-log-path: "";
 
     callback settings-changed();
     callback pick-custom-dll();
+    callback pick-lunar-log-path();
+    callback pick-badlion-log-path();
+    callback pick-legacy-badlion-log-path();
 
     background: transparent;
 
@@ -771,6 +786,206 @@ component SettingsPage inherits Rectangle {
                     }
                 }
             }
+
+            VerticalLayout {
+                spacing: 8px;
+                SectionHeader { label: "PRE-GAME CHAT LOG PATHS"; }
+                Rectangle {
+                    background: Palette.card;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: Palette.border;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 14px;
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text {
+                                        text: "Lunar Client Log Path";
+                                        color: Palette.text;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: "Log directory or log file for Lunar Client";
+                                        color: Palette.text-muted;
+                                        font-size: 11px;
+                                    }
+                                }
+                                Rectangle {
+                                    width: 76px;
+                                    height: 28px;
+                                    border-radius: 6px;
+                                    background: lunar-btn-touch.has-hover ? Palette.card-hover : Palette.accent-dim;
+                                    border-width: 1px;
+                                    border-color: Palette.accent;
+                                    lunar-btn-touch := TouchArea {
+                                        clicked => { root.pick-lunar-log-path(); }
+                                        mouse-cursor: MouseCursor.pointer;
+                                    }
+                                    Text {
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        text: "Browse...";
+                                        color: Palette.text;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                background: #14151b;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                height: 28px;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    Text {
+                                        text: root.lunar-log-path != "" ? root.lunar-log-path : "Default (Auto-detect)";
+                                        color: root.lunar-log-path != "" ? Palette.text : Palette.text-dim;
+                                        font-size: 10px;
+                                        font-family: "Consolas";
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: Palette.border; }
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text {
+                                        text: "Badlion Client Log Path";
+                                        color: Palette.text;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: "Log directory or log file for Badlion Client";
+                                        color: Palette.text-muted;
+                                        font-size: 11px;
+                                    }
+                                }
+                                Rectangle {
+                                    width: 76px;
+                                    height: 28px;
+                                    border-radius: 6px;
+                                    background: badlion-btn-touch.has-hover ? Palette.card-hover : Palette.accent-dim;
+                                    border-width: 1px;
+                                    border-color: Palette.accent;
+                                    badlion-btn-touch := TouchArea {
+                                        clicked => { root.pick-badlion-log-path(); }
+                                        mouse-cursor: MouseCursor.pointer;
+                                    }
+                                    Text {
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        text: "Browse...";
+                                        color: Palette.text;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                background: #14151b;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                height: 28px;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    Text {
+                                        text: root.badlion-log-path != "" ? root.badlion-log-path : "Default (Auto-detect)";
+                                        color: root.badlion-log-path != "" ? Palette.text : Palette.text-dim;
+                                        font-size: 10px;
+                                        font-family: "Consolas";
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle { height: 1px; background: Palette.border; }
+
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    Text {
+                                        text: "Legacy Badlion / Vanilla Log Path";
+                                        color: Palette.text;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: "Log directory or log file for Legacy Badlion / Vanilla";
+                                        color: Palette.text-muted;
+                                        font-size: 11px;
+                                    }
+                                }
+                                Rectangle {
+                                    width: 76px;
+                                    height: 28px;
+                                    border-radius: 6px;
+                                    background: legacy-btn-touch.has-hover ? Palette.card-hover : Palette.accent-dim;
+                                    border-width: 1px;
+                                    border-color: Palette.accent;
+                                    legacy-btn-touch := TouchArea {
+                                        clicked => { root.pick-legacy-badlion-log-path(); }
+                                        mouse-cursor: MouseCursor.pointer;
+                                    }
+                                    Text {
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                        text: "Browse...";
+                                        color: Palette.text;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                background: #14151b;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                height: 28px;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    Text {
+                                        text: root.legacy-badlion-log-path != "" ? root.legacy-badlion-log-path : "Default (Auto-detect)";
+                                        color: root.legacy-badlion-log-path != "" ? Palette.text : Palette.text-dim;
+                                        font-size: 10px;
+                                        font-family: "Consolas";
+                                        overflow: elide;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -778,8 +993,8 @@ component SettingsPage inherits Rectangle {
 export component MainWindow inherits Window {
     title: "OVson";
     icon: @image-url("ovson_logo.png");
-    width: 760px;
-    height: 500px;
+    width: 860px;
+    height: 600px;
     background: transparent;
     no-frame: true;
     forward-focus: kb;
@@ -804,6 +1019,9 @@ export component MainWindow inherits Window {
     in-out property <bool>   setting-auto-check-updates: true;
     in-out property <int>    setting-dll-slot: 0;
     in-out property <string> setting-custom-dll-path: "";
+    in-out property <string> setting-lunar-log-path: "";
+    in-out property <string> setting-badlion-log-path: "";
+    in-out property <string> setting-legacy-badlion-log-path: "";
 
     callback inject-clicked();
     callback close-clicked();
@@ -815,6 +1033,9 @@ export component MainWindow inherits Window {
     callback view-changelog();
     callback settings-changed();
     callback pick-custom-dll();
+    callback pick-lunar-log-path();
+    callback pick-badlion-log-path();
+    callback pick-legacy-badlion-log-path();
     callback show-context-menu(int);
 
     in property <[LogLine]> log-lines: [];
@@ -823,6 +1044,9 @@ export component MainWindow inherits Window {
     callback clear-log();
 
     in property <int> dump-count: 0;
+    
+    in property <[MarkdownBlock]> announcements: [];
+    callback open-link(string);
     in-out property <bool> show-report-modal: false;
     callback open-dumps-folder();
     callback report-crash-dumps();
@@ -838,10 +1062,10 @@ export component MainWindow inherits Window {
     property <length> logo-height: docked ? 24px : 78px;
     property <length> logo-x: docked
         ? 24px
-        : (root.width - logo-width) / 2;
+        : max(0px, (root.width - logo-width) / 2);
     property <length> logo-y: docked
         ? 12px
-        : (root.height - logo-height) / 2;
+        : max(0px, (root.height - logo-height) / 2);
 
     Rectangle {
         x: 0; y: 0; width: root.width; height: root.height;
@@ -868,7 +1092,7 @@ export component MainWindow inherits Window {
                     height: 26px;
 
                     NavButton {
-                        label: "Instances";
+                        label: "Home";
                         active: root.active-page == 0;
                         clicked => { root.active-page = 0; }
                     }
@@ -889,19 +1113,15 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                minimize-touch := TouchArea {
+                Rectangle {
                     x: parent.width - 70px;
                     y: 10px;
                     width: 28px;
                     height: 28px;
-                    clicked => { root.minimize-clicked(); }
-                    mouse-cursor: MouseCursor.pointer;
-                    Rectangle {
-                        width: parent.width; height: parent.height;
-                        border-radius: 6px;
-                        background: minimize-touch.has-hover ? #2b2c34 : transparent;
-                        animate background { duration: 140ms; }
-                    }
+                    border-radius: 6px;
+                    background: minimize-touch.has-hover ? #2b2c34 : transparent;
+                    animate background { duration: 140ms; }
+
                     Rectangle {
                         x: (parent.width - 12px) / 2;
                         y: (parent.height - 2px) / 2;
@@ -910,21 +1130,23 @@ export component MainWindow inherits Window {
                         background: minimize-touch.has-hover ? Palette.text : Palette.text-muted;
                         animate background { duration: 140ms; }
                     }
+
+                    minimize-touch := TouchArea {
+                        width: 100%; height: 100%;
+                        clicked => { root.minimize-clicked(); }
+                        mouse-cursor: MouseCursor.pointer;
+                    }
                 }
 
-                close-touch := TouchArea {
+                Rectangle {
                     x: parent.width - 36px;
                     y: 10px;
                     width: 28px;
                     height: 28px;
-                    clicked => { root.close-clicked(); }
-                    mouse-cursor: MouseCursor.pointer;
-                    Rectangle {
-                        width: parent.width; height: parent.height;
-                        border-radius: 6px;
-                        background: close-touch.has-hover ? #2b2c34 : transparent;
-                        animate background { duration: 140ms; }
-                    }
+                    border-radius: 6px;
+                    background: close-touch.has-hover ? #2b2c34 : transparent;
+                    animate background { duration: 140ms; }
+
                     Image {
                         x: (parent.width - self.width) / 2;
                         y: (parent.height - self.height) / 2;
@@ -934,6 +1156,12 @@ export component MainWindow inherits Window {
                                   ? Palette.text : Palette.text-muted;
                         source: @image-url("close.svg");
                         animate colorize { duration: 140ms; }
+                    }
+
+                    close-touch := TouchArea {
+                        width: 100%; height: 100%;
+                        clicked => { root.close-clicked(); }
+                        mouse-cursor: MouseCursor.pointer;
                     }
                 }
 
@@ -963,8 +1191,14 @@ export component MainWindow inherits Window {
                     auto-check-updates <=> root.setting-auto-check-updates;
                     dll-slot           <=> root.setting-dll-slot;
                     custom-dll-path:        root.setting-custom-dll-path;
+                    lunar-log-path          <=> root.setting-lunar-log-path;
+                    badlion-log-path        <=> root.setting-badlion-log-path;
+                    legacy-badlion-log-path <=> root.setting-legacy-badlion-log-path;
                     settings-changed => { root.settings-changed(); }
                     pick-custom-dll => { root.pick-custom-dll(); }
+                    pick-lunar-log-path => { root.pick-lunar-log-path(); }
+                    pick-badlion-log-path => { root.pick-badlion-log-path(); }
+                    pick-legacy-badlion-log-path => { root.pick-legacy-badlion-log-path(); }
                 }
                 if active-page == 2: AboutPage {
                     width: parent.width;
@@ -996,50 +1230,154 @@ export component MainWindow inherits Window {
                 }
             }
 
-            if active-page == 0: Rectangle {
+            if active-page == 0: ScrollView {
+                x: 28px;
+                width: parent.width - 56px;
                 vertical-stretch: 1;
 
-                if processes.length == 0: Rectangle {
-                    x: 28px; y: 0;
-                    width: parent.width - 56px;
-                    height: 110px;
-                    border-radius: 12px;
-                    background: Palette.panel;
-                    border-color: Palette.border;
-                    border-width: 1px;
+                VerticalLayout {
+                    spacing: 16px;
+                    padding-bottom: 20px;
 
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 6px;
-                        Text {
-                            text: "No Minecraft windows found";
-                            color: Palette.text;
-                            font-size: 15px;
-                            font-weight: 600;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: "Launch Minecraft (Lunar / Badlion / Vanilla / Forge) — the list refreshes automatically.";
-                            color: Palette.text-muted;
-                            font-size: 11px;
-                            horizontal-alignment: center;
-                            wrap: word-wrap;
+                    if processes.length == 0: Rectangle {
+                        height: 160px;
+                        border-radius: 12px;
+                        background: Palette.panel;
+                        border-color: Palette.border;
+                        border-width: 1px;
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 6px;
+                            Text {
+                                text: "No Minecraft windows found";
+                                color: Palette.text;
+                                font-size: 15px;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: "Launch Minecraft (Lunar / Badlion / Vanilla / Forge) — the list refreshes automatically.";
+                                color: Palette.text-muted;
+                                font-size: 11px;
+                                horizontal-alignment: center;
+                                wrap: word-wrap;
+                            }
                         }
                     }
-                }
 
-                if processes.length > 0: ScrollView {
-                    x: 28px; y: 0;
-                    width: parent.width - 56px;
-                    height: parent.height;
-
-                    VerticalLayout {
+                    if processes.length > 0: VerticalLayout {
                         spacing: 10px;
                         for proc[i] in processes: ProcessCard {
                             data: proc;
                             clicked => { root.toggle-row(i); }
                             uninject-clicked => { root.uninject-row(i); }
                             right-clicked => { root.show-context-menu(i); }
+                        }
+                    }
+
+                    Rectangle { height: 4px; }
+
+                    VerticalLayout {
+                        vertical-stretch: 1;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            padding-top: 10px;
+                            padding-bottom: 2px;
+                            Text {
+                                text: "ANNOUNCEMENTS";
+                                color: Palette.text;
+                                font-size: 12px;
+                                font-weight: 600;
+                                horizontal-stretch: 1;
+                            }
+                        }
+
+                        Rectangle {
+                            border-radius: 10px;
+                            background: Palette.card;
+                            border-width: 1px;
+                            border-color: Palette.border;
+
+                            ScrollView {
+                                VerticalLayout {
+                                    padding-top: 14px;
+                                    padding-bottom: 14px;
+                                    spacing: 0;
+                                    
+                                    if announcements.length == 0: VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 6px;
+                                        Text {
+                                            text: "Welcome to OVson!";
+                                            color: Palette.text;
+                                            font-weight: 700;
+                                            font-size: 14px;
+                                        }
+                                        Text {
+                                            text: "Updates and news will be displayed here soon. Stay tuned for new features and improvements!";
+                                            color: Palette.text-muted;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                    
+                                    for ann[i] in announcements: VerticalLayout {
+                                        padding: 6px;
+                                        padding-left: 12px;
+                                        padding-right: 12px;
+                                        
+                                        if ann.block-type == "text": Text {
+                                            text: ann.content;
+                                            color: Palette.text-dim;
+                                            font-size: 13px;
+                                            wrap: word-wrap;
+                                        }
+                                        if ann.block-type == "h1": Text {
+                                            text: ann.content;
+                                            color: Palette.text;
+                                            font-size: 16px;
+                                            font-weight: 700;
+                                            wrap: word-wrap;
+                                            padding-bottom: 4px;
+                                        }
+                                        if ann.block-type == "h2": Text {
+                                            text: ann.content;
+                                            color: Palette.text;
+                                            font-size: 14px;
+                                            font-weight: 600;
+                                            wrap: word-wrap;
+                                            padding-bottom: 2px;
+                                        }
+                                        if ann.block-type == "image": Image {
+                                            source: ann.img;
+                                            image-fit: contain;
+                                            horizontal-alignment: left;
+                                        }
+                                        if ann.block-type == "link": HorizontalLayout {
+                                            alignment: start;
+                                            TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.open-link(ann.url); }
+                                                VerticalLayout {
+                                                    spacing: 1px;
+                                                    alignment: start;
+                                                    Text {
+                                                        text: ann.content;
+                                                        color: #3b82f6;
+                                                        font-size: 13px;
+                                                    }
+                                                    Rectangle {
+                                                        height: 1px;
+                                                        background: #3b82f6;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

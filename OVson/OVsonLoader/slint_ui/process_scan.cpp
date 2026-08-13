@@ -52,23 +52,8 @@ static bool looksLikeMinecraft(const std::wstring &title) {
          lo.find(L"badlion") != std::wstring::npos;
 }
 
-static bool ovsonModuleLoaded(DWORD pid) {
-  HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
-  if (snap == INVALID_HANDLE_VALUE)
-    return false;
-  MODULEENTRY32W me{};
-  me.dwSize = sizeof(me);
-  bool found = false;
-  if (Module32FirstW(snap, &me)) {
-    do {
-      if (_wcsnicmp(me.szModule, L"OVson", 5) == 0) {
-        found = true;
-        break;
-      }
-    } while (Module32NextW(snap, &me));
-  }
-  CloseHandle(snap);
-  return found;
+static bool ovsonModuleLoaded(DWORD /*pid*/) {
+  return false;
 }
 
 static std::wstring exePathForPid(DWORD pid) {
@@ -116,15 +101,22 @@ static uint32_t uptimeForPid(DWORD pid) {
 }
 
 static std::wstring versionFromTitle(const std::wstring &title) {
-  static const std::wregex re(L"Minecraft[* ]+([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)",
-                              std::regex_constants::icase);
-  std::wsmatch m;
-  if (std::regex_search(title, m, re) && m.size() >= 2) {
-    return m[1].str();
-  }
-  static const std::wregex re2(L"\\b([0-9]+\\.[0-9]+(?:\\.[0-9]+)?)\\b");
-  if (std::regex_search(title, m, re2) && m.size() >= 2) {
-    return m[1].str();
+  if (title.empty()) return L"";
+  for (size_t i = 0; i < title.size(); ++i) {
+    if (iswdigit(title[i])) {
+      size_t start = i;
+      size_t dotCount = 0;
+      size_t j = i;
+      while (j < title.size() && (iswdigit(title[j]) || title[j] == L'.')) {
+        if (title[j] == L'.') dotCount++;
+        j++;
+      }
+      if (dotCount >= 1 && (j - start) >= 3) {
+        while (j > start && !iswdigit(title[j - 1])) j--;
+        if (j > start) return title.substr(start, j - start);
+      }
+      i = j;
+    }
   }
   return L"";
 }
@@ -179,14 +171,12 @@ static bool hasLocalEvents(DWORD pid) {
   HANDLE alive = openOVsonEvent(SYNCHRONIZE, L"OVsonAlive", pid);
   if (!alive) return false;
   CloseHandle(alive);
-  HANDLE un = openOVsonEvent(SYNCHRONIZE, L"OVsonUninject", pid);
-  if (!un) return false;
-  CloseHandle(un);
   return true;
 }
 
 bool isAlreadyInjected(DWORD pid) {
-  return hasLocalEvents(pid);
+  if (hasLocalEvents(pid)) return true;
+  return ovsonModuleLoaded(pid);
 }
 
 bool hasStaleOldDll(DWORD pid) {
@@ -194,11 +184,10 @@ bool hasStaleOldDll(DWORD pid) {
   return ovsonModuleLoaded(pid);
 }
 
-std::vector<MinecraftProcess> findMinecraftProcesses() {
-  std::vector<MinecraftProcess> out;
+static void safeScanCore(std::vector<MinecraftProcess> &out) {
   HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if (snap == INVALID_HANDLE_VALUE)
-    return out;
+    return;
   PROCESSENTRY32W pe{};
   pe.dwSize = sizeof(pe);
   if (Process32FirstW(snap, &pe)) {
@@ -223,10 +212,18 @@ std::vector<MinecraftProcess> findMinecraftProcesses() {
     } while (Process32NextW(snap, &pe));
   }
   CloseHandle(snap);
-  std::sort(out.begin(), out.end(),
-            [](const MinecraftProcess &a, const MinecraftProcess &b) {
-              return a.pid < b.pid;
-            });
+}
+
+std::vector<MinecraftProcess> findMinecraftProcesses() {
+  std::vector<MinecraftProcess> out;
+  try {
+    safeScanCore(out);
+    std::sort(out.begin(), out.end(),
+              [](const MinecraftProcess &a, const MinecraftProcess &b) {
+                return a.pid < b.pid;
+              });
+  } catch (...) {
+  }
   return out;
 }
 
