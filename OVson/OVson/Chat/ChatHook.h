@@ -5,4 +5,6 @@ namespace ChatHook {
 	bool install();
 	void uninstall();
 	bool onClientSendMessage(const std::string& message);
+	std::string processIncomingChat(const std::string& unformattedText, const std::string& rawJson);
 }
+

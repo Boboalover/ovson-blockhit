@@ -57,6 +57,11 @@ extern bool g_initialized;
 extern int g_mode; // 0 bedwars, 1 skywars, 2 duels
 extern bool g_inHypixelGame;
 extern bool g_inPreGameLobby;
+extern bool g_inReplay;
+
+extern ULONGLONG g_lastNativeChatReceipt;
+void processRawChatLine(const std::string &chat, const std::string &rawLogLine);
+void enqueueNativeChat(const std::string &chat);
 
 extern std::string g_lastOnlineLine;
 extern std::vector<std::string> g_onlinePlayers;
@@ -84,6 +89,7 @@ extern ULONGLONG g_bootstrapStartTick;
 extern ULONGLONG g_preGameDetectTick;
 extern std::string g_localTeam;
 extern std::string g_localName;
+extern std::unordered_map<std::string, ULONGLONG> g_autoStatsCooldowns;
 extern std::unordered_map<std::string, int> g_teamProbeTries;
 extern bool g_teamReportSent;
 
@@ -111,7 +117,7 @@ std::string resolveTeamForName(const std::string &name);
 std::string resolveTeamForNameEx(JNIEnv *env, const std::string &name,
                                  jobject scoreboard, jmethodID m_getPlayersTeam,
                                  jclass teamCls, jmethodID m_getPrefix);
-void setTeamColorSticky(const std::string &name, const std::string &newTeam);
+void setTeamColorSticky(const std::string &name, const std::string &team, bool fromHelmet = false);
 bool isRealBedwarsTeam(const std::string &t);
 std::string teamFromColorCode(char code);
 void detectTeamsFromLine(const std::string &chat);
@@ -127,7 +133,7 @@ void syncTags();
 void resetGameCache();
 void cleanupStaleStats();
 void pruneStatsCache();
-void sendTeamStatsReport();
+void sendTeamStatsReport(bool force = false, std::string channelOverride = "");
 void fetchWorker(std::string name, std::string forcedUuid = "");
 void fetchWorkerBody(const std::string &name, const std::string &forcedUuid);
 void queuePlayersForFetching();

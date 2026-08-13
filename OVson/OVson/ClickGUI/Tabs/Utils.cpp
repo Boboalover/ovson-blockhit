@@ -132,6 +132,33 @@ void renderUtils(TabCtx &ctx) {
   }
   cy += 110;
 
+  drawSectionLabel(cx, cy, "Raw Mouse Fix", alpha);
+  bool hMouse = isHovered(mx, my, mainX + 190, cy + 30, g_w - 210, 60);
+  glDisable(GL_TEXTURE_2D);
+  drawThemeCard(mainX + 190, cy + 30, g_w - 210, 60, hMouse, alpha);
+
+  glEnable(GL_TEXTURE_2D);
+  g_guiFont.drawString(cx, cy + 40, "Raw Mouse Input",
+                       applyAlpha(0xFFFFFFFF, alpha));
+  g_guiFont.drawString(cx, cy + 58, "Fixes choppy mouse movement in-game",
+                       applyAlpha(0xFFA0A0A5, alpha));
+
+  bool mouseFix = Config::isRawMouseFixEnabled();
+  glDisable(GL_TEXTURE_2D);
+  float mouseSwX = mainX + g_w - 65;
+  drawSwitch(28, mouseSwX, cy + 40, mouseFix, hMouse, alpha);
+  glEnable(GL_TEXTURE_2D);
+  if (clickEvent && hMouse) {
+    Config::setRawMouseFixEnabled(!mouseFix);
+    NotificationManager::getInstance()->add(
+        "Utils",
+        !mouseFix ? "Raw Mouse Fix Enabled"
+                  : "Raw Mouse Fix Disabled",
+        !mouseFix ? NotificationType::Success
+                  : NotificationType::Warning);
+  }
+  cy += 110;
+
   g_guiFont.drawString(cx, cy, "Replay Automations",
                        applyAlpha(0xFFFFFFFF, alpha));
   bool hReplay = isHovered(mx, my, mainX + 190, cy + 30, g_w - 210, 60);

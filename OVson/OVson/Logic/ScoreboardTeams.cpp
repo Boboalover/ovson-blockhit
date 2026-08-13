@@ -3,14 +3,20 @@
 
 #include "../Java.h"
 #include "../Utils/Logger.h"
+#include "../Utils/Anticheat/Anticheat.h"
 
 #include <Windows.h>
 #include <cstring>
 #include <jni.h>
 #include <mutex>
 #include <string>
+#include <unordered_set>
+#include <fstream>
+#include <chrono>
 
 namespace OVson {
+
+std::unordered_set<std::string> g_helmetTeamSet;
 
 const char *mcColorForTeam(const std::string &team) {
   if (team == "Red")
@@ -66,9 +72,16 @@ bool isRealBedwarsTeam(const std::string &t) {
          t == "Aqua" || t == "Pink" || t == "White";
 }
 
-void setTeamColorSticky(const std::string &name, const std::string &newTeam) {
+void setTeamColorSticky(const std::string &name, const std::string &newTeam, bool fromHelmet) {
   if (newTeam.empty())
     return;
+
+  if (fromHelmet) {
+      g_helmetTeamSet.insert(name);
+  } else if (g_inReplay && g_helmetTeamSet.find(name) != g_helmetTeamSet.end()) {
+      return;
+  }
+
   auto it = g_playerTeamColor.find(name);
   if (it != g_playerTeamColor.end() && isRealBedwarsTeam(it->second) &&
       (newTeam == "Gray" || newTeam == "Grey")) {
@@ -113,7 +126,6 @@ void detectTeamsFromLine(const std::string &chat) {
       if (!g_localName.empty() && !g_localTeam.empty()) {
         g_playerTeamColor[g_localName] = g_localTeam;
       }
-      sendTeamStatsReport();
     }
     std::string needle2 = std::string(" joined (") + t + ")";
     auto p2 = chat.find(needle2);
@@ -130,6 +142,41 @@ void detectTeamsFromLine(const std::string &chat) {
       }
     }
   }
+}
+
+std::string closestTeamColor(int color) {
+  if (color == 10511680 || color == -1) return ""; // default leather color or invalid
+
+  int r = (color >> 16) & 0xFF;
+  int g = (color >> 8) & 0xFF;
+  int b = color & 0xFF;
+
+  struct TeamColor { std::string name; int r, g, b; };
+  static const TeamColor teams[] = {
+      {"Red", 255, 0, 0},
+      {"Blue", 0, 0, 255},
+      {"Blue", 51, 76, 178},
+      {"Green", 72, 204, 24},
+      {"Yellow", 255, 255, 0},
+      {"Aqua", 0, 255, 255},
+      {"White", 255, 255, 255},
+      {"Pink", 239, 130, 164},
+      {"Gray", 128, 128, 128}
+  };
+  
+  std::string bestTeam;
+  int bestDist = 9999999;
+  for (const auto& tc : teams) {
+    int dr = r - tc.r;
+    int dg = g - tc.g;
+    int db = b - tc.b;
+    int dist = dr*dr + dg*dg + db*db;
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestTeam = tc.name;
+    }
+  }
+  return bestTeam;
 }
 
 void updateTeamsFromScoreboard() {
@@ -212,6 +259,99 @@ void updateTeamsFromScoreboard() {
     env->DeleteLocalRef(mcObj);
     return;
   }
+  
+  if (g_inReplay) {
+    jfieldID f_loadedEntityList = env->GetFieldID(worldCls, "loadedEntityList", "Ljava/util/List;");
+    if (!f_loadedEntityList) { env->ExceptionClear(); f_loadedEntityList = env->GetFieldID(worldCls, "field_72996_f", "Ljava/util/List;"); }
+    if (!f_loadedEntityList) { env->ExceptionClear(); f_loadedEntityList = env->GetFieldID(worldCls, "f", "Ljava/util/List;"); }
+
+    if (f_loadedEntityList) {
+      jobject playerList = env->GetObjectField(world, f_loadedEntityList);
+      if (playerList) {
+        jclass listCls = env->GetObjectClass(playerList);
+        jmethodID m_toArray = env->GetMethodID(listCls, "toArray", "()[Ljava/lang/Object;");
+        env->DeleteLocalRef(listCls);
+        if (m_toArray) {
+          jobjectArray array = (jobjectArray)env->CallObjectMethod(playerList, m_toArray);
+          if (array) {
+            jclass epCls = lc->GetClass("net.minecraft.entity.player.EntityPlayer");
+            jmethodID m_getName = lc->GetMethodID(epCls, "getName", "()Ljava/lang/String;", "func_70005_c_", "e_");
+            jfieldID f_inventory = lc->GetFieldID(epCls, "inventory", "Lnet/minecraft/entity/player/InventoryPlayer;", "field_71071_by", "bi");
+            jclass ipCls = lc->GetClass("net.minecraft.entity.player.InventoryPlayer");
+            jfieldID f_armorInventory = lc->GetFieldID(ipCls, "armorInventory", "[Lnet/minecraft/item/ItemStack;", "field_70460_b", "b");
+            jclass isCls = lc->GetClass("net.minecraft.item.ItemStack");
+            jmethodID m_getItem = lc->GetMethodID(isCls, "getItem", "()Lnet/minecraft/item/Item;", "func_77973_b", "b");
+            jclass iaCls = lc->GetClass("net.minecraft.item.ItemArmor");
+            jmethodID m_getColor = lc->GetMethodID(iaCls, "getColor", "(Lnet/minecraft/item/ItemStack;)I", "func_82814_b", "b");
+
+            if (epCls && m_getName && f_inventory && ipCls && f_armorInventory && isCls && m_getItem && iaCls && m_getColor) {
+                int len = env->GetArrayLength(array);
+                for (int i = 0; i < len; i++) {
+                  jobject player = env->GetObjectArrayElement(array, i);
+                  if (player) {
+                    if (env->IsInstanceOf(player, epCls)) {
+                      jstring jName = (jstring)env->CallObjectMethod(player, m_getName);
+                      env->ExceptionClear();
+                      if (jName) {
+                        const char *nameStr = env->GetStringUTFChars(jName, 0);
+                        if (nameStr) {
+                          std::string pName(nameStr);
+                          env->ReleaseStringUTFChars(jName, nameStr);
+                          
+                          std::string cleanName;
+                          for (size_t k = 0; k < pName.length(); ++k) {
+                            if (k + 2 < pName.length() && (unsigned char)pName[k] == 0xC2 && (unsigned char)pName[k+1] == 0xA7) {
+                              k += 2;
+                            } else if (k + 1 < pName.length() && (unsigned char)pName[k] == 0xA7) {
+                              k += 1;
+                            } else {
+                              cleanName += pName[k];
+                            }
+                          }
+                          pName = cleanName;
+                          
+                          jobject inv = env->GetObjectField(player, f_inventory);
+                          if (inv) {
+                            jobjectArray armor = (jobjectArray)env->GetObjectField(inv, f_armorInventory);
+                            if (armor) {
+                              if (env->GetArrayLength(armor) >= 4) {
+                                jobject helmet = env->GetObjectArrayElement(armor, 3);
+                                if (helmet) {
+                                  jobject item = env->CallObjectMethod(helmet, m_getItem);
+                                  env->ExceptionClear();
+                                  if (item && env->IsInstanceOf(item, iaCls)) {
+                                    int color = env->CallIntMethod(item, m_getColor, helmet);
+                                    env->ExceptionClear();
+                                    std::string teamStr = closestTeamColor(color);
+                                    if (!teamStr.empty()) {
+                                        setTeamColorSticky(pName, teamStr, true);
+                                    }
+                                  }
+                                  if (item) env->DeleteLocalRef(item);
+                                  env->DeleteLocalRef(helmet);
+                                }
+                              }
+                              env->DeleteLocalRef(armor);
+                            }
+                            env->DeleteLocalRef(inv);
+                          }
+                        }
+                        env->DeleteLocalRef(jName);
+                      }
+                    }
+                    env->DeleteLocalRef(player);
+                  }
+                }
+            }
+            env->DeleteLocalRef(array);
+          }
+        }
+        env->DeleteLocalRef(playerList);
+      }
+    }
+  }
+
+
   jmethodID m_getScoreboard = env->GetMethodID(
       worldCls, "getScoreboard", "()Lnet/minecraft/scoreboard/Scoreboard;");
   if (!m_getScoreboard) {
@@ -274,21 +414,31 @@ void updateTeamsFromScoreboard() {
   Lunar::reporter = nullptr;
 
   jmethodID m_getPrefix = lc->GetMethodID(
-      teamCls, "getPrefix", "()Ljava/lang/String;", "func_96668_e", "e");
+      teamCls, "getColorPrefix", "()Ljava/lang/String;", "func_96668_e", "c");
   if (!m_getPrefix) {
-    m_getPrefix = lc->GetMethodID(teamCls, "getColorPrefix",
-                                  "()Ljava/lang/String;", "func_96661_b", "b");
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    m_getPrefix = lc->FindMethodBySignature(teamCls, "()Ljava/lang/String;");
   }
 
   jmethodID m_getSuffix = lc->GetMethodID(
-      teamCls, "getSuffix", "()Ljava/lang/String;", "func_96663_f", "f");
+      teamCls, "getColorSuffix", "()Ljava/lang/String;", "func_96663_f", "d");
   if (!m_getSuffix) {
-    m_getSuffix = lc->GetMethodID(teamCls, "getColorSuffix",
-                                  "()Ljava/lang/String;", "func_96662_c", "c");
+    if (env->ExceptionCheck()) env->ExceptionClear();
   }
   (void)m_getSuffix; // resolved for completeness but only prefix is used below
 
   Lunar::reporter = oldReporter;
+
+  static auto lastDbg = std::chrono::steady_clock::now();
+  auto now = std::chrono::steady_clock::now();
+  bool shouldDbg = std::chrono::duration_cast<std::chrono::seconds>(now - lastDbg).count() >= 2;
+  if (shouldDbg) lastDbg = now;
+  
+  std::ofstream dbg;
+  if (shouldDbg) {
+      dbg.open("C:\\Users\\HPC1\\Desktop\\ovson_team_debug.txt", std::ios::out);
+      dbg << "--- updateTeamsFromScoreboard ---" << std::endl;
+  }
 
   for (const std::string &name : g_onlinePlayers) {
     jstring jn = env->NewStringUTF(name.c_str());
@@ -301,30 +451,53 @@ void updateTeamsFromScoreboard() {
       if (pref) {
         const char *utf = env->GetStringUTFChars(pref, 0);
         if (utf) {
-          const char *sect = strchr(utf, '\xC2');
-          char code = 0;
-          const char *raw = strchr(utf, '\xA7');
-          if (raw && raw[1])
-            code = raw[1];
-          if (!code && sect) {
+          if (shouldDbg) dbg << "Player: " << name << " -> Prefix: " << utf;
+          std::string teamWord = "";
+          const char* tNames[] = {"Red", "Blue", "Green", "Yellow", "Aqua", "Pink", "Gray", "White"};
+          for (const char* t : tNames) {
+              if (strstr(utf, t)) {
+                  teamWord = t;
+                  break;
+              }
+          }
+
+          if (!teamWord.empty()) {
+            setTeamColorSticky(name, teamWord);
+            if (shouldDbg) dbg << "    -> Assigned Team (by Word): " << teamWord << std::endl;
+          } else {
+            char code = 0;
             const unsigned char *u = (const unsigned char *)utf;
             for (size_t i = 0; u[i]; ++i) {
               if (u[i] == 0xC2 && u[i + 1] == 0xA7 && u[i + 2]) {
-                code = (char)u[i + 2];
-                break;
+                char c = (char)tolower(u[i + 2]);
+                if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+                  code = c;
+                }
+              } else if (u[i] == 0xA7 && u[i + 1]) {
+                char c = (char)tolower(u[i + 1]);
+                if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+                  code = c;
+                }
               }
             }
-          }
-          if (code) {
-            std::string tname = teamFromColorCode(code);
-            if (!tname.empty())
-              setTeamColorSticky(name, tname);
+            if (shouldDbg) dbg << " -> Extracted Color: " << (code ? std::string(1, code) : "none") << std::endl;
+            if (code) {
+              std::string tname = teamFromColorCode(code);
+              if (!tname.empty()) {
+                setTeamColorSticky(name, tname);
+                if (shouldDbg) dbg << "    -> Assigned Team: " << tname << std::endl;
+              }
+            }
           }
           env->ReleaseStringUTFChars(pref, utf);
         }
         env->DeleteLocalRef(pref);
+      } else {
+        if (shouldDbg) dbg << "Player: " << name << " -> NO PREFIX FOUND (m_getPrefix returned NULL)" << std::endl;
       }
       env->DeleteLocalRef(team);
+    } else {
+      if (shouldDbg) dbg << "Player: " << name << " -> NO TEAM OBJECT FOUND" << std::endl;
     }
     env->DeleteLocalRef(jn);
   }
@@ -355,8 +528,15 @@ std::string resolveTeamForNameEx(JNIEnv *env, const std::string &name,
       if (u) {
         for (size_t i = 0; u[i]; ++i) {
           if (u[i] == 0xC2 && u[i + 1] == 0xA7 && u[i + 2]) {
-            code = (char)u[i + 2];
-            break;
+            char c = (char)tolower(u[i + 2]);
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+              code = c;
+            }
+          } else if (u[i] == 0xA7 && u[i + 1]) {
+            char c = (char)tolower(u[i + 1]);
+            if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+              code = c;
+            }
           }
         }
         env->ReleaseStringUTFChars(pref, (const char *)u);

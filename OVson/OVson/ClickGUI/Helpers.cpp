@@ -372,7 +372,6 @@ void drawThemeBackground(float screenW, float screenH, float alpha) {
   RenderUtils::drawRadialGlow(screenW * 0.78f, screenH * 1.05f, screenH * 1.05f,
                               RenderUtils::lerpColor(0xFFD8559E, 0xFF8A5BE8, ph3),
                               0.18f * alpha);
-  // extra purple bloom hugging the top-right edge for a fuller right side
   RenderUtils::drawRadialGlow(screenW * 1.02f, screenH * 0.12f, screenH * 0.85f,
                               RenderUtils::lerpColor(0xFFB44DE0, 0xFF8A5BE8, ph1),
                               0.16f * alpha);

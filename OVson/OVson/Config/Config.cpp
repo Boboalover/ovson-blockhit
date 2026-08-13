@@ -21,6 +21,9 @@ static bool g_ovShowStar = true, g_ovShowFk = true, g_ovShowFkdr = true,
             g_ovShowWins = true, g_ovShowWlr = true, g_ovShowWs = true;
 static bool g_ovShowKills = false, g_ovShowKdr = false, g_ovShowBeds = false,
             g_ovShowBlr = false, g_ovShowPing = false, g_ovShowTags = true;
+static bool g_chatStatsEnabled = true;
+static std::string g_chatStatsFormat = "fkdr";
+static std::string g_chatStatsStyle = "Parentheses";
 
 static bool g_proShowStar = true, g_proShowFk = true, g_proShowFkdr = true,
             g_proShowWins = true, g_proShowWlr = true, g_proShowWs = true;
@@ -37,7 +40,12 @@ static bool g_uninjectKeyEnabled = true;
 static bool g_notificationsEnabled = true;
 static bool g_autoGGEnabled = true;
 static std::string g_autoGGMessage = "gg";
+static std::string g_lunarLogPath = "";
+static std::string g_badlionLogPath = "";
+static std::string g_legacyBadlionLogPath = "";
 static DWORD g_themeColor = 0xFF3D6EF5;
+static bool g_chromaEnabled = false;
+static float g_chromaSpeed = 30.0f;
 static bool g_motionBlurEnabled = false;
 static float g_motionBlurAmount = 0.5f;
 static bool g_nameTagsEnabled = true;
@@ -140,6 +148,7 @@ static float g_liquidGlassDarkness = 0.58f;
 static bool g_discordRpcEnabled = true;
 static std::string g_discordAppId = "1467865675262329019";
 static bool g_nickedBypass = true;
+static bool g_rawMouseFixEnabled = false;
 static bool g_techEnabled = false;
 static bool g_anticheatEnabled = true;
 static bool g_anticheatNoSlowEnabled = true;
@@ -155,6 +164,7 @@ static bool g_commandsEnabled = true;
 static bool g_teamReportEnabled = false;
 static std::string g_teamReportChannel = "/pc";
 static bool g_preGameChatStatsEnabled = true;
+static bool g_lobbyMentionStatsEnabled = true;
 static bool g_smartChatBypassEnabled = false;
 static bool g_betterTabModeEnabled = false;
 static float g_betterTabX = -1.0f;
@@ -163,6 +173,7 @@ static float g_betterTabScale = 1.0f;
 static bool g_keylessMode = false;
 static std::string g_commandPrefix = ".";
 static std::string g_auroraApiKey = "";
+static std::string g_spoofIp = "";
 static bool g_numberDenickerEnabled = false;
 static int g_pingDisplayMode = 0;
 static HMODULE g_hModule = nullptr;
@@ -312,6 +323,11 @@ bool Config::initialize(HMODULE self) {
   else
     g_tabDisplayMode = "fkdr";
 
+  if (parseJsonLine(all, "spoofIp", val))
+    g_spoofIp = val;
+  else
+    g_spoofIp = "";
+
   if (!parseJsonBool(all, "tabSortDescending", g_tabSortDescending))
     g_tabSortDescending = true;
 
@@ -355,8 +371,28 @@ bool Config::initialize(HMODULE self) {
   else
     g_autoGGMessage = "gg";
 
+  if (parseJsonLine(all, "lunarLogPath", val))
+    g_lunarLogPath = val;
+  else
+    g_lunarLogPath = "";
+
+  if (parseJsonLine(all, "badlionLogPath", val))
+    g_badlionLogPath = val;
+  else
+    g_badlionLogPath = "";
+
+  if (parseJsonLine(all, "legacyBadlionLogPath", val))
+    g_legacyBadlionLogPath = val;
+  else
+    g_legacyBadlionLogPath = "";
+
   if (!parseJsonUInt(all, "themeColor", g_themeColor))
     g_themeColor = 0xFF3D6EF5;
+
+  if (!parseJsonBool(all, "chromaEnabled", g_chromaEnabled))
+    g_chromaEnabled = false;
+  if (!parseJsonFloat(all, "chromaSpeed", g_chromaSpeed))
+    g_chromaSpeed = 30.0f;
 
   if (!parseJsonBool(all, "motionBlurEnabled", g_motionBlurEnabled))
     g_motionBlurEnabled = false;
@@ -447,6 +483,8 @@ bool Config::initialize(HMODULE self) {
 
   if (!parseJsonBool(all, "nickedBypass", g_nickedBypass))
     g_nickedBypass = true;
+  if (!parseJsonBool(all, "rawMouseFixEnabled", g_rawMouseFixEnabled))
+    g_rawMouseFixEnabled = false;
 
   if (g_discordAppId == "1335272304856010773") {
     g_discordAppId = "1467865675262329019";
@@ -519,6 +557,19 @@ bool Config::initialize(HMODULE self) {
 
   if (!parseJsonBool(all, "preGameChatStatsEnabled", g_preGameChatStatsEnabled))
     g_preGameChatStatsEnabled = true;
+  if (!parseJsonBool(all, "lobbyMentionStatsEnabled", g_lobbyMentionStatsEnabled))
+    g_lobbyMentionStatsEnabled = true;
+
+  if (!parseJsonBool(all, "chatStatsEnabled", g_chatStatsEnabled))
+    g_chatStatsEnabled = true;
+  if (parseJsonLine(all, "chatStatsFormat", val))
+    g_chatStatsFormat = val;
+  else
+    g_chatStatsFormat = "fkdr";
+  if (parseJsonLine(all, "chatStatsStyle", val))
+    g_chatStatsStyle = val;
+  else
+    g_chatStatsStyle = "Parentheses";
 
   if (!parseJsonBool(all, "keylessMode", g_keylessMode)) {
     g_keylessMode = g_apiKey.empty();
@@ -618,6 +669,8 @@ static bool saveImpl() {
       "  \"autoGGEnabled\": %s,\n"
       "  \"autoGGMessage\": \"%s\",\n"
       "  \"themeColor\": %u,\n"
+      "  \"chromaEnabled\": %s,\n"
+      "  \"chromaSpeed\": %.2f,\n"
       "  \"motionBlurEnabled\": %s,\n"
       "  \"motionBlurAmount\": %.2f,\n"
       "  \"nameTagsEnabled\": %s,\n"
@@ -642,9 +695,11 @@ static bool saveImpl() {
       "  \"liquidGlassCardEdgeWidth\": %.2f,\n"
       "  \"liquidGlassDarkness\": %.2f,\n"
       "  \"chatBypasserEnabled\": %s,\n"
+      "  \"chatStatsEnabled\": %s,\n"
+      "  \"chatStatsFormat\": \"%s\",\n"
+      "  \"chatStatsStyle\": \"%s\",\n"
       "  \"debugGlobal\": %s,\n"
-      "  "
-      "\"debugGameDetection\": %s,\n"
+      "  \"debugGameDetection\": %s,\n"
       "  \"debugBedDetection\": %s,\n"
       "  \"debugUrchin\": %s,\n"
       "  \"debugSeraph\": %s,\n"
@@ -653,9 +708,11 @@ static bool saveImpl() {
       "  \"debugGeneral\": %s,\n"
       "  \"discordRpcEnabled\": %s,\n"
       "  \"discordAppId\": \"%s\",\n"
+      "  \"spoofIp\": \"%s\",\n"
       "  \"tabDisplayMode\": \"%s\",\n"
       "  \"tabSortDescending\": %s,\n"
       "  \"nickedBypass\": %s,\n"
+      "  \"rawMouseFixEnabled\": %s,\n"
       "  \"sortMode\": \"%s\",\n"
       "  \"ovShowStar\": %s, \"ovShowFk\": %s, \"ovShowFkdr\": %s, "
       "\"ovShowWins\": %s, \"ovShowWlr\": %s, \"ovShowWs\": %s,\n"
@@ -673,6 +730,7 @@ static bool saveImpl() {
       "  \"teamReportEnabled\": %s,\n"
       "  \"teamReportChannel\": \"%s\",\n"
       "  \"preGameChatStatsEnabled\": %s,\n"
+      "  \"lobbyMentionStatsEnabled\": %s,\n"
       "  \"smartChatBypassEnabled\": %s,\n"
       "  \"betterTabModeEnabled\": %s,\n"
       "  \"betterTabX\": %.2f,\n"
@@ -698,6 +756,7 @@ static bool saveImpl() {
       g_uninjectKey, g_uninjectKeyEnabled ? "true" : "false",
       g_notificationsEnabled ? "true" : "false",
       g_autoGGEnabled ? "true" : "false", g_autoGGMessage.c_str(), g_themeColor,
+      g_chromaEnabled ? "true" : "false", g_chromaSpeed,
       g_motionBlurEnabled ? "true" : "false", g_motionBlurAmount,
       g_nameTagsEnabled ? "true" : "false", g_nameTagHeight,
       serializeNameTagStats().c_str(),
@@ -717,13 +776,19 @@ static bool saveImpl() {
       g_liquidGlassCardEdgeWidth,
       g_liquidGlassDarkness,
       g_chatBypasserEnabled ? "true" : "false",
+      g_chatStatsEnabled ? "true" : "false",
+      g_chatStatsFormat.c_str(),
+      g_chatStatsStyle.c_str(),
       g_debugGlobal ? "true" : "false", g_debugGameDetection ? "true" : "false",
       g_debugBedDetection ? "true" : "false", g_debugUrchin ? "true" : "false",
       g_debugSeraph ? "true" : "false", g_debugGUI ? "true" : "false",
       g_debugBedDefense ? "true" : "false", g_debugGeneral ? "true" : "false",
       g_discordRpcEnabled ? "true" : "false", g_discordAppId.c_str(),
+      g_spoofIp.c_str(),
       g_tabDisplayMode.c_str(), g_tabSortDescending ? "true" : "false",
-      g_nickedBypass ? "true" : "false", g_sortMode.c_str(),
+      g_nickedBypass ? "true" : "false",
+      g_rawMouseFixEnabled ? "true" : "false",
+      g_sortMode.c_str(),
       g_ovShowStar ? "true" : "false", g_ovShowFk ? "true" : "false",
       g_ovShowFkdr ? "true" : "false", g_ovShowWins ? "true" : "false",
       g_ovShowWlr ? "true" : "false", g_ovShowWs ? "true" : "false",
@@ -740,6 +805,7 @@ static bool saveImpl() {
       g_techY, g_commandsEnabled ? "true" : "false",
       g_teamReportEnabled ? "true" : "false", g_teamReportChannel.c_str(),
       g_preGameChatStatsEnabled ? "true" : "false",
+      g_lobbyMentionStatsEnabled ? "true" : "false",
       g_smartChatBypassEnabled ? "true" : "false",
       g_betterTabModeEnabled ? "true" : "false",
       g_betterTabX, g_betterTabY, g_betterTabScale,
@@ -772,6 +838,11 @@ bool Config::save() {
   g_savePending = true;
   g_lastSaveRequest = GetTickCount64();
   return true;
+}
+
+bool Config::saveNow() {
+  g_savePending = false;
+  return saveImpl();
 }
 
 const std::string &Config::getApiKey() { return g_apiKey; }
@@ -846,6 +917,12 @@ void Config::setNickedBypass(bool enabled) {
   save();
 }
 
+bool Config::isRawMouseFixEnabled() { return g_rawMouseFixEnabled; }
+void Config::setRawMouseFixEnabled(bool enabled) {
+  g_rawMouseFixEnabled = enabled;
+  save();
+}
+
 int Config::getClickGuiKey() { return g_clickGuiKey; }
 void Config::setClickGuiKey(int key) {
   g_clickGuiKey = key;
@@ -892,6 +969,12 @@ void Config::setThemeColor(DWORD color) {
   g_themeColor = color;
   save();
 }
+
+bool Config::isChromaEnabled() { return g_chromaEnabled; }
+void Config::setChromaEnabled(bool enabled) { g_chromaEnabled = enabled; save(); }
+
+float Config::getChromaSpeed() { return g_chromaSpeed; }
+void Config::setChromaSpeed(float speed) { g_chromaSpeed = speed; save(); }
 
 bool Config::isMotionBlurEnabled() { return g_motionBlurEnabled; }
 void Config::setMotionBlurEnabled(bool enabled) {
@@ -972,6 +1055,24 @@ void Config::setAuroraApiKey(const std::string &key) {
 bool Config::isNumberDenickerEnabled() { return g_numberDenickerEnabled; }
 void Config::setNumberDenickerEnabled(bool enabled) {
   g_numberDenickerEnabled = enabled;
+  save();
+}
+
+const std::string &Config::getLunarLogPath() { return g_lunarLogPath; }
+void Config::setLunarLogPath(const std::string &path) {
+  g_lunarLogPath = path;
+  save();
+}
+
+const std::string &Config::getBadlionLogPath() { return g_badlionLogPath; }
+void Config::setBadlionLogPath(const std::string &path) {
+  g_badlionLogPath = path;
+  save();
+}
+
+const std::string &Config::getLegacyBadlionLogPath() { return g_legacyBadlionLogPath; }
+void Config::setLegacyBadlionLogPath(const std::string &path) {
+  g_legacyBadlionLogPath = path;
   save();
 }
 
@@ -1135,6 +1236,12 @@ void Config::setDiscordRpcEnabled(bool enabled) {
 const std::string &Config::getDiscordAppId() { return g_discordAppId; }
 void Config::setDiscordAppId(const std::string &id) {
   g_discordAppId = id;
+  save();
+}
+
+std::string Config::getSpoofIp() { return g_spoofIp; }
+void Config::setSpoofIp(const std::string& ip) {
+  g_spoofIp = ip;
   save();
 }
 
@@ -1327,6 +1434,29 @@ void Config::setTeamReportChannel(const std::string &channel) {
 bool Config::isPreGameChatStatsEnabled() { return g_preGameChatStatsEnabled; }
 void Config::setPreGameChatStatsEnabled(bool enabled) {
   g_preGameChatStatsEnabled = enabled;
+  save();
+}
+
+bool Config::isLobbyMentionStatsEnabled() { return g_lobbyMentionStatsEnabled; }
+void Config::setLobbyMentionStatsEnabled(bool enabled) {
+  g_lobbyMentionStatsEnabled = enabled;
+  save();
+}
+
+bool Config::isChatStatsEnabled() { return g_chatStatsEnabled; }
+void Config::setChatStatsEnabled(bool enabled) {
+  g_chatStatsEnabled = enabled;
+  save();
+}
+const std::string &Config::getChatStatsFormat() { return g_chatStatsFormat; }
+void Config::setChatStatsFormat(const std::string &format) {
+  g_chatStatsFormat = format;
+  save();
+}
+
+const std::string &Config::getChatStatsStyle() { return g_chatStatsStyle; }
+void Config::setChatStatsStyle(const std::string &style) {
+  g_chatStatsStyle = style;
   save();
 }
 

@@ -1239,7 +1239,7 @@ void BedDefenseManager::asyncScanTask() {
           };
 
           jfieldID f_listing = lc->GetFieldID(
-              cpCls, "chunkListing", "Ljava/util/List;", "field_73239_b", "b");
+              cpCls, "chunkListing", "Ljava/util/List;", "field_73239_b", "d");
           if (!f_listing)
             f_listing = lc->FindFieldBySignature(cpCls, "Ljava/util/List;");
           if (!f_listing)

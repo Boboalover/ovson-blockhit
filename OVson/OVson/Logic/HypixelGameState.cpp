@@ -8,6 +8,8 @@
 #include "../Java.h"
 #include "../Render/NotificationManager.h"
 #include "../Utils/Logger.h"
+#include "../SDK/Minecraft.h"
+#include "../SDK/Player.h"
 
 #include <Windows.h>
 #include <cctype>
@@ -102,7 +104,38 @@ void detectPreGameLobby() {
   if (!env || !g_initialized)
     return;
 
+  static ULONGLONG lastNameUpdate = 0;
   ULONGLONG now = GetTickCount64();
+  if (g_localName.empty() || now - lastNameUpdate > 5000) {
+      lastNameUpdate = now;
+      CMinecraft mc;
+      CPlayer lp = mc.GetLocalPlayer();
+      if (lp.Get()) {
+          jclass epCls = lc->GetClass("net.minecraft.entity.Entity");
+          if (epCls) {
+              jmethodID m_getName = nullptr;
+              const char *nameMethods[] = {"getName", "func_70005_c_", "h_", "e_", "f_", "g_", "i_", "j_", "k_", nullptr};
+              for (int i = 0; nameMethods[i]; i++) {
+                  m_getName = env->GetMethodID(epCls, nameMethods[i], "()Ljava/lang/String;");
+                  if (env->ExceptionCheck()) env->ExceptionClear();
+                  else if (m_getName) break;
+              }
+              if (m_getName) {
+                  jstring js = (jstring)env->CallObjectMethod(lp.Get(), m_getName);
+                  if (js) {
+                      const char *utf = env->GetStringUTFChars(js, nullptr);
+                      if (utf) {
+                          g_localName = utf;
+                          env->ReleaseStringUTFChars(js, utf);
+                      }
+                      env->DeleteLocalRef(js);
+                  }
+              }
+          }
+          lp.Cleanup();
+      }
+  }
+
   if (now - g_preGameDetectTick < 500)
     return;
   g_preGameDetectTick = now;
@@ -112,7 +145,6 @@ void detectPreGameLobby() {
       g_inPreGameLobby = false;
       Logger::log(Config::DebugCategory::GameDetection,
                   "Pre-game lobby ended (game started)");
-      sendTeamStatsReport();
     }
     return;
   }
@@ -506,8 +538,58 @@ void detectPreGameLobby() {
     }
   }
 
+  bool wasReplay = g_inReplay;
+  bool isReplay = false;
+
+  static jmethodID s_m_getDisp = nullptr;
+  if (!s_m_getDisp) {
+    jclass oCls = env->GetObjectClass(sidebarObj);
+    if (oCls) {
+      s_m_getDisp = env->GetMethodID(oCls, "getDisplayName", "()Ljava/lang/String;");
+      if (!s_m_getDisp) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        s_m_getDisp = env->GetMethodID(oCls, "func_96678_d", "()Ljava/lang/String;");
+      }
+      if (!s_m_getDisp) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        s_m_getDisp = env->GetMethodID(oCls, "d", "()Ljava/lang/String;");
+      }
+      env->DeleteLocalRef(oCls);
+    }
+  }
+
+  if (s_m_getDisp) {
+    jstring dispJ = (jstring)env->CallObjectMethod(sidebarObj, s_m_getDisp);
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+      dispJ = nullptr;
+    }
+    if (dispJ) {
+      const char* utf = env->GetStringUTFChars(dispJ, 0);
+      if (utf) {
+        std::string title = utf;
+        env->ReleaseStringUTFChars(dispJ, utf);
+        std::string cleanTitle;
+        for (size_t i = 0; i < title.length(); i++) {
+          if ((unsigned char)title[i] == 0xC2 && i+1 < title.length() && (unsigned char)title[i+1] == 0xA7) { i++; continue; }
+          if ((unsigned char)title[i] == 0xA7) { i++; continue; }
+          cleanTitle += (char)toupper(title[i]);
+        }
+        if (cleanTitle.find("REPLAY") != std::string::npos) {
+          isReplay = true;
+        }
+      }
+      env->DeleteLocalRef(dispJ);
+    }
+  }
+
   bool isPreGame = (foundMap && foundPlayers) || (foundMap && foundMode) ||
                    (foundPlayers && foundMode);
+
+  if (isReplay) {
+      isPreGame = false;
+  }
+
 
   if (Config::isDebugging()) {
     static ULONGLONG lastPreDbg = 0;
@@ -526,6 +608,7 @@ void detectPreGameLobby() {
   if (isPreGame && !wasPreGame) {
     g_inPreGameLobby = true;
     clearAllCaches();
+
     Logger::log(Config::DebugCategory::GameDetection,
                 "Pre-game lobby DETECTED (sidebar has Map/Players/Mode)");
     Render::NotificationManager::getInstance()->add(
@@ -533,9 +616,25 @@ void detectPreGameLobby() {
   } else if (!isPreGame && wasPreGame) {
     g_inPreGameLobby = false;
     clearAllCaches();
+
     Logger::log(Config::DebugCategory::GameDetection, "Pre-game lobby ended");
   }
 
+  if (isReplay && !wasReplay) {
+    g_inReplay = true;
+    clearAllCaches();
+
+    Logger::log(Config::DebugCategory::GameDetection, "Replay DETECTED (scoreboard title REPLAY)");
+    Render::NotificationManager::getInstance()->add(
+        "System", "Replay Detected", Render::NotificationType::Success);
+  } else if (!isReplay && wasReplay) {
+    g_inReplay = false;
+    clearAllCaches();
+
+    Logger::log(Config::DebugCategory::GameDetection, "Replay ended");
+  }
+
+  g_inReplay = isReplay;
   g_inPreGameLobby = isPreGame;
 
   env->DeleteLocalRef(sidebarObj);

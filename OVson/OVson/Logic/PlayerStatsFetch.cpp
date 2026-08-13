@@ -189,9 +189,6 @@ void fetchWorkerBody(const std::string &name, const std::string &forcedUuid) {
                 CachedStats(fetchedStats, GetTickCount64());
           }
         }
-
-        std::lock_guard<std::mutex> lock(g_pendingStatsMutex);
-        g_pendingStatsMap[name] = fetchedStats;
       } else
         fetchError = true;
     } else
@@ -237,10 +234,14 @@ void fetchWorkerBody(const std::string &name, const std::string &forcedUuid) {
     Hypixel::PlayerStats &targetStats = cacheFound ? cachedData : fetchedStats;
     std::string currentUuid = cacheFound ? targetStats.uuid : uuidToF;
 
-    if (cacheFound && currentUuid.empty()) {
-      auto u = Hypixel::getUuidByName(name);
-      if (u)
-        currentUuid = *u;
+    if (currentUuid.empty()) {
+      if (!targetStats.uuid.empty()) {
+        currentUuid = targetStats.uuid;
+      } else {
+        auto u = Hypixel::getUuidByName(name);
+        if (u)
+          currentUuid = *u;
+      }
     }
 
     std::string tagStr;
@@ -251,6 +252,9 @@ void fetchWorkerBody(const std::string &name, const std::string &forcedUuid) {
       std::string t = raw;
       for (auto &c : t)
         c = (char)toupper((unsigned char)c);
+      if (t.find("REPLAY") != std::string::npos || t.find("REPLAYS_NEEDED") != std::string::npos)
+        return "\xC2\xA7"
+               "6[RN]";
       if (t.find("BLATANT") != std::string::npos)
         return "\xC2\xA7"
                "4[BC]";
@@ -322,9 +326,17 @@ void fetchWorkerBody(const std::string &name, const std::string &forcedUuid) {
     targetStats.tagsDisplay = tagStr;
     targetStats.rawTags = rTags;
     targetStats.areTagsFetched = true;
+
     if (cacheFound) {
+      cachedData.tagsDisplay = tagStr;
+      cachedData.rawTags = rTags;
+      cachedData.areTagsFetched = true;
       std::lock_guard<std::mutex> lock(g_cacheMutex);
       g_persistentStatsCache[name] = {cachedData, now};
+    } else {
+      fetchedStats.tagsDisplay = tagStr;
+      fetchedStats.rawTags = rTags;
+      fetchedStats.areTagsFetched = true;
     }
   }
 
@@ -402,7 +414,7 @@ void fetchWorkerBody(const std::string &name, const std::string &forcedUuid) {
 
 void queuePlayersForFetching() {
   ULONGLONG now = GetTickCount64();
-  if (!g_inHypixelGame && !g_inPreGameLobby)
+  if (!g_inHypixelGame && !g_inPreGameLobby && !g_inReplay)
     return;
   if (g_inHypixelGame && g_lobbyGraceTicks > 0)
     return;
@@ -587,6 +599,10 @@ void processPendingStats() {
 
       std::string rankDisplay = "\xC2\xA7"
                                 "7";
+      std::string effectiveRank = (!stats.newPackageRank.empty() && stats.newPackageRank != "NONE")
+                                      ? stats.newPackageRank
+                                      : stats.packageRank;
+
       if (!stats.prefix.empty()) {
         rankDisplay = stats.prefix + " ";
       } else if (!stats.rank.empty() && stats.rank != "NORMAL") {
@@ -615,30 +631,27 @@ void processPendingStats() {
                       pc +
                       "++\xC2\xA7"
                       "6] ";
-      } else if (stats.newPackageRank == "MVP_PLUS") {
+      } else if (effectiveRank == "MVP_PLUS") {
         std::string pc = getRankColor(stats.rankPlusColor);
         rankDisplay = "\xC2\xA7"
                       "b[MVP" +
                       pc +
                       "+\xC2\xA7"
                       "b] ";
-      } else if (stats.newPackageRank == "MVP") {
+      } else if (effectiveRank == "MVP") {
         rankDisplay = "\xC2\xA7"
                       "b[MVP] ";
-      } else if (stats.newPackageRank == "VIP_PLUS") {
+      } else if (effectiveRank == "VIP_PLUS") {
         rankDisplay = "\xC2\xA7"
                       "a[VIP\xC2\xA7"
                       "6+\xC2\xA7"
                       "a] ";
-      } else if (stats.newPackageRank == "VIP") {
+      } else if (effectiveRank == "VIP") {
         rankDisplay = "\xC2\xA7"
                       "a[VIP] ";
       }
 
-      msg += rankDisplay + name;
-      if (!stats.tagsDisplay.empty())
-        msg += stats.tagsDisplay;
-
+      msg += rankDisplay + name + " -";
       if (g_mode == 0) {
         msg += std::string(" \xC2\xA7"
                            "7[\xC2\xA7"
@@ -724,11 +737,93 @@ void processPendingStats() {
     g_playerStatsMap[name] = stats;
   }
 
+  auto escapeJsonLocal = [](const std::string &str) -> std::string {
+    std::string result;
+    for (char c : str) {
+      if (c == '"') result += "\\\"";
+      else if (c == '\\') result += "\\\\";
+      else if (c == '/') result += "\\/";
+      else if (c == '\b') result += "\\b";
+      else if (c == '\f') result += "\\f";
+      else if (c == '\n') result += "\\n";
+      else if (c == '\r') result += "\\r";
+      else if (c == '\t') result += "\\t";
+      else result += c;
+    }
+    return result;
+  };
+
   if (forceOutput || Config::getOverlayMode() == "chat") {
+    struct TagInfo { std::string text; std::string reason; };
+    std::vector<TagInfo> tags;
+
+    auto getAbbr = [](const std::string &raw) -> std::string {
+      std::string t = raw;
+      for (auto &c : t) c = (char)toupper((unsigned char)c);
+      if (t.find("REPLAY") != std::string::npos || t.find("REPLAYS_NEEDED") != std::string::npos) return "\xC2\xA7" "6[RN]";
+      if (t.find("BLATANT") != std::string::npos) return "\xC2\xA7" "4[BC]";
+      if (t.find("CLOSET") != std::string::npos) return "\xC2\xA7" "4[CC]";
+      if (t.find("CONFIRMED") != std::string::npos) return "\xC2\xA7" "5[C]";
+      if (t.find("CHEATER") != std::string::npos) return "\xC2\xA7" "5[C]";
+      if (t.find("CAUTION") != std::string::npos) return "\xC2\xA7" "e[!]";
+      if (t.find("SUSPICIOUS") != std::string::npos) return "\xC2\xA7" "6[?]";
+      if (t.find("SNIPER") != std::string::npos) return "\xC2\xA7" "6[S]";
+      if (t.find("INFO") != std::string::npos) return "\xC2\xA7" "a[I]";
+      return "";
+    };
+
+    for (const auto &raw : stats.rawTags) {
+      if (raw == "URCHIN_CHECKED" || raw == "SERAPH_CHECKED") continue;
+      size_t sep = raw.find('\x1F');
+      if (sep != std::string::npos) {
+        std::string service_type = raw.substr(0, sep);
+        std::string reason = raw.substr(sep + 1);
+
+        std::string service = "";
+        std::string type = "";
+        size_t colon = service_type.find(':');
+        if (colon != std::string::npos) {
+          service = service_type.substr(0, colon);
+          type = service_type.substr(colon + 1);
+        } else {
+          type = service_type;
+        }
+
+        std::string abbr = getAbbr(type);
+        if (abbr.empty()) {
+          if (service == "URCHIN") abbr = "\xC2\xA7" "4[U]";
+          else if (service == "SERAPH") abbr = "\xC2\xA7" "4[S]";
+          else abbr = "\xC2\xA7" "4[U]";
+        }
+        tags.push_back({abbr, reason});
+      }
+    }
+
     std::string text = ChatSDK::formatPrefix() + msg;
-    RenderHook::enqueueTask([text]() {
-      ChatSDK::showClientMessage(text);
-    });
+
+    if (!tags.empty()) {
+      std::string json = "{\"text\":\"\",\"extra\":[";
+      json += "{\"text\":\"" + escapeJsonLocal(text + " \xC2\xA7" "7[\xC2\xA7" "fTags\xC2\xA7" "7]") + "\"}";
+      for (const auto &tag : tags) {
+        json += ",{\"text\":\" " + escapeJsonLocal(tag.text) + "\",\"hoverEvent\":{\"action\":\"show_text\",\"value\":\"" + escapeJsonLocal(tag.reason) + "\"}}";
+      }
+      json += "]}";
+
+      std::string tagsStr = stats.tagsDisplay;
+      while (!tagsStr.empty() && tagsStr[0] == ' ') tagsStr.erase(0, 1);
+      std::string fallbackMsg = text;
+      if (!tagsStr.empty()) {
+        fallbackMsg += " \xC2\xA7" "7[\xC2\xA7" "fTags\xC2\xA7" "7] \xC2\xA7" "f" + tagsStr;
+      }
+      
+      RenderHook::enqueueTask([json, fallbackMsg]() {
+        ChatSDK::showJsonMessage(json, fallbackMsg);
+      });
+    } else {
+      RenderHook::enqueueTask([text]() {
+        ChatSDK::showClientMessage(text);
+      });
+    }
   }
 
   static auto isPlayerTagAlertMuted = [](const std::string &pname) -> bool {
@@ -791,7 +886,7 @@ void processPendingStats() {
     return false;
   };
 
-  if (Config::isTagsEnabled() && !stats.rawTags.empty() && !isPlayerTagAlertMuted(name)) {
+  if (Config::isTagsEnabled() && !stats.rawTags.empty() && !isPlayerTagAlertMuted(name) && !OVson::isInPreGameLobby()) {
     auto splitTagPayload = [](const std::string &payload)
         -> std::pair<std::string, std::string> {
       auto sep = payload.find('\x1F');
@@ -877,8 +972,8 @@ void processPendingStats() {
     }
   }
 
+
   Logger::info("Stats processed for %s", name.c_str());
   g_processedPlayers.insert(name);
 }
-
 } // namespace OVson

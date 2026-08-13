@@ -10,6 +10,7 @@ bool initialize(HMODULE selfModule);
 HMODULE getModuleHandle();
 void update();
 bool save();
+bool saveNow();
 const std::string &getApiKey();
 void setApiKey(const std::string &key);
 
@@ -41,6 +42,26 @@ void setBetterTabScale(float scale);
 
 bool isPreGameChatStatsEnabled();
 void setPreGameChatStatsEnabled(bool enabled);
+
+bool isLobbyMentionStatsEnabled();
+void setLobbyMentionStatsEnabled(bool enabled);
+
+bool isChatStatsEnabled();
+void setChatStatsEnabled(bool enabled);
+const std::string &getChatStatsFormat();
+void setChatStatsFormat(const std::string &format);
+const std::string &getChatStatsStyle();
+void setChatStatsStyle(const std::string &style);
+
+const std::string &getLunarLogPath();
+void setLunarLogPath(const std::string &path);
+
+const std::string &getBadlionLogPath();
+void setBadlionLogPath(const std::string &path);
+
+const std::string &getLegacyBadlionLogPath();
+void setLegacyBadlionLogPath(const std::string &path);
+
 const std::string &getSortMode(); // General sort metric (Stars, FKDR, etc.)
 void setSortMode(const std::string &mode);
 
@@ -59,6 +80,9 @@ void setBedDefenseEnabled(bool enabled);
 
 bool isNickedBypass();
 void setNickedBypass(bool enabled);
+
+bool isRawMouseFixEnabled();
+void setRawMouseFixEnabled(bool enabled);
 
 // click gui settings
 int getClickGuiKey();
@@ -81,6 +105,12 @@ void setCommandsEnabled(bool enabled);
 // theme customization
 DWORD getThemeColor();
 void setThemeColor(DWORD color);
+
+bool isChromaEnabled();
+void setChromaEnabled(bool enabled);
+
+float getChromaSpeed();
+void setChromaSpeed(float speed);
 
 // motion blur (gonna make this work one day)
 bool isMotionBlurEnabled();
@@ -176,6 +206,9 @@ bool isProShowFkdr();
 void setProShowFkdr(bool show);
 bool isProShowWins();
 void setProShowWins(bool show);
+
+std::string getSpoofIp();
+void setSpoofIp(const std::string& ip);
 bool isProShowWlr();
 void setProShowWlr(bool show);
 bool isProShowWs();

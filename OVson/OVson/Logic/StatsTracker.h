@@ -32,6 +32,7 @@ bool isInGame(const std::string &name);
 bool shouldAlert(const std::string &name);
 bool isInHypixelGame();
 bool isInPreGameLobby();
+bool isInReplay();
 bool shouldAutoFetchTags();
 bool isChatOpen();
 int getGameMode();

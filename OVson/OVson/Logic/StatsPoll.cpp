@@ -86,6 +86,25 @@ void pollBody() {
 
     queuePlayersForFetching();
     processPendingStats();
+
+    bool queueEmpty = false;
+    {
+      std::lock_guard<std::mutex> qlock(g_queueMutex);
+      queueEmpty = g_queuedPlayers.empty();
+    }
+    
+    static ULONGLONG gameStartTick = 0;
+    if (g_inHypixelGame && !g_inPreGameLobby) {
+        if (gameStartTick == 0) gameStartTick = now;
+    } else {
+        gameStartTick = 0;
+    }
+
+    if (g_inHypixelGame && !g_inPreGameLobby && Config::isTeamReportEnabled() && !g_teamReportSent) {
+      if (queueEmpty && !g_playerStatsMap.empty() && (now - gameStartTick > 5000)) {
+        sendTeamStatsReport(false, "");
+      }
+    }
   }
 
   double startTime = TimeUtil::getTime();

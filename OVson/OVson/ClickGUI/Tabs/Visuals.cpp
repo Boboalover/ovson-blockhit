@@ -643,6 +643,130 @@ void renderVisuals(TabCtx &ctx) {
                             : NotificationType::Warning);
     }
     cy += 72;
+
+    bool hLobbyMention = isHovered(mx, my, mainX + 190, cy - 10, g_w - 210, 62);
+    glDisable(GL_TEXTURE_2D);
+    drawThemeCard(mainX + 190, cy - 10, g_w - 210, 62, hLobbyMention, alpha);
+    glEnable(GL_TEXTURE_2D);
+
+    glEnable(GL_TEXTURE_2D);
+    g_guiFont.drawString(cx, cy, "Lobby Mention Stats",
+                         applyAlpha(0xFFFFFFFF, alpha * s_contentAlpha));
+    g_guiFont.drawString(
+        cx, cy + 18, "Auto-fetch stats when your name is mentioned in lobby",
+        applyAlpha(0xFFA0A0A5, alpha * s_contentAlpha), 0.45f);
+
+    bool lobbyMentionEnabled = Config::isLobbyMentionStatsEnabled();
+    glDisable(GL_TEXTURE_2D);
+    float lmSwX = mainX + g_w - 65;
+    drawSwitch(101, lmSwX, cy + 5, lobbyMentionEnabled, hLobbyMention, alpha);
+    glEnable(GL_TEXTURE_2D);
+
+    if (clickEvent && hLobbyMention) {
+      Config::setLobbyMentionStatsEnabled(!lobbyMentionEnabled);
+      NotificationManager::getInstance()->add(
+          "Chat",
+          !lobbyMentionEnabled ? "Lobby Mention Stats Enabled"
+                               : "Lobby Mention Stats Disabled",
+          !lobbyMentionEnabled ? NotificationType::Success
+                               : NotificationType::Warning);
+    }
+    cy += 72;
+
+    bool hovAnyStyle = false;
+    float tempStyleX = cx + 50;
+    for (int i = 0; i < 2; ++i) {
+      if (isHovered(mx, my, tempStyleX, cy + 67, 90, 25))
+        hovAnyStyle = true;
+      tempStyleX += 95;
+    }
+
+    bool hInGameChat = isHovered(mx, my, mainX + 190, cy - 10, g_w - 210, 112);
+    bool hovAnyStat = false;
+    float tempStatX = cx + 50;
+    for (int i = 0; i < 5; ++i) {
+      if (isHovered(mx, my, tempStatX, cy + 37, 50, 25))
+        hovAnyStat = true;
+      tempStatX += 55;
+    }
+
+    glDisable(GL_TEXTURE_2D);
+    drawThemeCard(mainX + 190, cy - 10, g_w - 210, 112, hInGameChat, alpha);
+    glEnable(GL_TEXTURE_2D);
+
+    glEnable(GL_TEXTURE_2D);
+    g_guiFont.drawString(cx, cy, "In-Game Chat Stats",
+                         applyAlpha(0xFFFFFFFF, alpha * s_contentAlpha));
+    g_guiFont.drawString(
+        cx, cy + 18, "Inject player stats into chat messages instantly",
+        applyAlpha(0xFFA0A0A5, alpha * s_contentAlpha), 0.45f);
+
+    bool inGameChatStatsEnabled = Config::isChatStatsEnabled();
+    glDisable(GL_TEXTURE_2D);
+    float igSwX = mainX + g_w - 65;
+    drawSwitch(38, igSwX, cy + 5, inGameChatStatsEnabled, hInGameChat && !hovAnyStat && !hovAnyStyle,
+               alpha);
+    glEnable(GL_TEXTURE_2D);
+
+    if (clickEvent && hInGameChat && !hovAnyStat && !hovAnyStyle) {
+      Config::setChatStatsEnabled(!inGameChatStatsEnabled);
+      NotificationManager::getInstance()->add(
+          "Chat",
+          !inGameChatStatsEnabled ? "In-Game Stats Enabled" : "In-Game Stats Disabled",
+          !inGameChatStatsEnabled ? NotificationType::Success
+                            : NotificationType::Warning);
+    }
+
+    glEnable(GL_TEXTURE_2D);
+    g_guiFont.drawString(
+        cx, cy + 42,
+        "Stat:", applyAlpha(0xFFA0A0A5, alpha * s_contentAlpha), 0.45f);
+
+    const char *statKeys[] = {"fkdr", "wlr", "fk", "wins", "blr"};
+    const char *statLabels[] = {"FKDR", "WLR", "Finals", "Wins", "BBLR"};
+    std::string curStatFmt = Config::getChatStatsFormat();
+    float stX = cx + 50;
+    for (int i = 0; i < 5; ++i) {
+      bool hov = isHovered(mx, my, stX, cy + 37, 50, 25);
+      bool sel = (curStatFmt == statKeys[i]);
+      glDisable(GL_TEXTURE_2D);
+      drawThemeButton(stX, cy + 37, 50, 25, hov, sel, alpha * s_contentAlpha);
+      glEnable(GL_TEXTURE_2D);
+      g_guiFont.drawString(
+          stX + 6, cy + 44, statLabels[i],
+          applyAlpha(sel ? 0xFFFFFFFF : 0xFF808085, alpha * s_contentAlpha),
+          0.38f);
+      if (clickEvent && hov) {
+        Config::setChatStatsFormat(statKeys[i]);
+      }
+      stX += 55;
+    }
+
+    g_guiFont.drawString(
+        cx, cy + 72,
+        "Style:", applyAlpha(0xFFA0A0A5, alpha * s_contentAlpha), 0.45f);
+
+    const char *styleKeys[] = {"Parentheses", "Colon"};
+    const char *styleLabels[] = {"(1k Finals)", ": 1k Finals"};
+    std::string curStyleFmt = Config::getChatStatsStyle();
+    float stStyleX = cx + 50;
+    for (int i = 0; i < 2; ++i) {
+      bool hov = isHovered(mx, my, stStyleX, cy + 67, 90, 25);
+      bool sel = (curStyleFmt == styleKeys[i]);
+      glDisable(GL_TEXTURE_2D);
+      drawThemeButton(stStyleX, cy + 67, 90, 25, hov, sel, alpha * s_contentAlpha);
+      glEnable(GL_TEXTURE_2D);
+      g_guiFont.drawString(
+          stStyleX + 6, cy + 74, styleLabels[i],
+          applyAlpha(sel ? 0xFFFFFFFF : 0xFF808085, alpha * s_contentAlpha),
+          0.38f);
+      if (clickEvent && hov) {
+        Config::setChatStatsStyle(styleKeys[i]);
+      }
+      stStyleX += 95;
+    }
+
+    cy += 122;
   }
 
   {

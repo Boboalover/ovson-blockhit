@@ -277,9 +277,15 @@ void renderTags(TabCtx &ctx) {
   }
   }
 
-  g_guiFont.drawString(cx, cy, "Players in Current Game",
-                       applyAlpha(0xFFFFFFFF, alpha));
-  cy += 35;
+  struct RenderTagCache {
+    std::optional<Urchin::PlayerTags> urchin;
+    std::optional<Seraph::PlayerTags> seraph;
+  };
+  static std::unordered_map<std::string, RenderTagCache> s_renderCache;
+  static ULONGLONG s_lastRefreshTick = 0;
+
+  ULONGLONG nowTick = GetTickCount64();
+  bool shouldRefresh = (nowTick - s_lastRefreshTick) > 2000; // refresh every 2s
 
   std::lock_guard<std::mutex> stLock(OVson::g_statsMutex);
   if (OVson::g_playerStatsMap.empty()) {
@@ -295,6 +301,18 @@ void renderTags(TabCtx &ctx) {
     g_guiFont.drawString(cx + 420, cy, "Seraph",
                          applyAlpha(0xFFA0A0A5, alpha));
     cy += 25;
+
+    if (shouldRefresh && Config::isTagsEnabled()) {
+      s_lastRefreshTick = nowTick;
+      std::string activeS = Config::getActiveTagService();
+      for (const auto &pair : OVson::g_playerStatsMap) {
+        auto &rc = s_renderCache[pair.first];
+        if (activeS == "Urchin" || activeS == "Both")
+          rc.urchin = Urchin::getPlayerTags(pair.first);
+        if (activeS == "Seraph" || activeS == "Both")
+          rc.seraph = Seraph::getPlayerTags(pair.first, pair.second.uuid);
+      }
+    }
 
     for (const auto &pair : OVson::g_playerStatsMap) {
       const std::string &name = pair.first;
@@ -325,12 +343,13 @@ void renderTags(TabCtx &ctx) {
 
       if (Config::isTagsEnabled()) {
         std::string activeS = Config::getActiveTagService();
+        auto rcIt = s_renderCache.find(name);
 
         if (activeS == "Urchin" || activeS == "Both") {
-          auto uTagsRes = Urchin::getPlayerTags(name);
-          if (uTagsRes && !uTagsRes->tags.empty()) {
+          bool hasData = rcIt != s_renderCache.end() && rcIt->second.urchin && !rcIt->second.urchin->tags.empty();
+          if (hasData) {
             std::string tS;
-            for (auto &t : uTagsRes->tags) {
+            for (auto &t : rcIt->second.urchin->tags) {
               if (!tS.empty()) tS += ", ";
               tS += t.type;
             }
@@ -345,10 +364,10 @@ void renderTags(TabCtx &ctx) {
                                applyAlpha(0xFF505055, alpha));
 
         if (activeS == "Seraph" || activeS == "Both") {
-          auto sTagsRes = Seraph::getPlayerTags(name, stats.uuid);
-          if (sTagsRes && !sTagsRes->tags.empty()) {
+          bool hasData = rcIt != s_renderCache.end() && rcIt->second.seraph && !rcIt->second.seraph->tags.empty();
+          if (hasData) {
             std::string tS;
-            for (auto &t : sTagsRes->tags) {
+            for (auto &t : rcIt->second.seraph->tags) {
               if (!tS.empty()) tS += ", ";
               tS += t.type;
             }

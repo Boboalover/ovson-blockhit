@@ -435,6 +435,22 @@ void updateTabListStats() {
       }
       env->DeleteLocalRef(motd);
     }
+
+    std::string spoofIp = Config::getSpoofIp();
+    if (!spoofIp.empty()) {
+      jclass sdCls = env->GetObjectClass(serverData);
+      if (sdCls) {
+        jfieldID f_ip = lc->GetFieldID(sdCls, "serverIP", "Ljava/lang/String;", "field_78845_b", "b", "Ljava/lang/String;");
+        if (f_ip) {
+          jstring jSpoof = env->NewStringUTF(spoofIp.c_str());
+          env->SetObjectField(serverData, f_ip, jSpoof);
+          env->DeleteLocalRef(jSpoof);
+        }
+        env->DeleteLocalRef(sdCls);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+      }
+    }
+
     env->DeleteLocalRef(serverData);
   }
 
@@ -1035,7 +1051,7 @@ void updateTabListStats() {
         g_onlinePlayers = currentNames;
       }
 
-      if (needsImmediateTeamSync && g_inHypixelGame) {
+      if (needsImmediateTeamSync && (g_inHypixelGame || g_inReplay)) {
         // better team sync
         updateTeamsFromScoreboard();
         g_lastTeamScanTick = now;
@@ -1111,7 +1127,7 @@ void updateTabListStats() {
               }
             }
 
-            if (forceReset || !Config::isTabEnabled() || !g_inHypixelGame) {
+            if (forceReset || !Config::isTabEnabled() || (!g_inHypixelGame && !g_inReplay)) {
               if (m_setDisp)
                 env->CallVoidMethod(info, m_setDisp, nullptr);
               if (f_gpName) {
@@ -1326,7 +1342,7 @@ void updateTabListStats() {
     if (tabObj)
       env->DeleteLocalRef(tabObj);
 
-    if (!currentNames.empty() && g_inHypixelGame) {
+    if (!currentNames.empty() && (g_inHypixelGame || g_inReplay)) {
       if (!g_manualPushedPlayers.empty()) {
         for (const auto &mName : g_manualPushedPlayers) {
           if (std::find(currentNames.begin(), currentNames.end(), mName) ==
@@ -1481,6 +1497,9 @@ void syncTags() {
     std::string t = raw;
     for (auto &c : t)
       c = toupper(c);
+    if (t.find("REPLAY") != std::string::npos || t.find("REPLAYS_NEEDED") != std::string::npos)
+      return "\xC2\xA7"
+             "6[RN]";
     if (t.find("BLATANT") != std::string::npos)
       return "\xC2\xA7"
              "4[BC]";

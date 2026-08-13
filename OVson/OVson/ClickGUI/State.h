@@ -73,8 +73,6 @@ extern float s_accentVal;     // 0..1
 extern bool  s_accentDragSV;
 extern bool  s_accentDragHue;
 extern bool  s_accentInit;
-extern bool  s_chromaEnabled;
-extern float s_chromaSpeed;   // degrees / second
 
 extern int   s_colorSelectedStat;
 extern bool  s_colorPickerOpen;

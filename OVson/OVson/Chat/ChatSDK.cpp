@@ -211,18 +211,45 @@ bool ChatSDK::showJsonMessage(const std::string &json,
     if (!chatGui) goto fall;
 
     jclass serCls = lc->GetClass("net.minecraft.util.IChatComponent$Serializer");
-    jmethodID jsonToComp = nullptr;
-    if (serCls) {
-      jsonToComp = env->GetStaticMethodID(serCls, "jsonToComponent",
-          "(Ljava/lang/String;)Lnet/minecraft/util/IChatComponent;");
-      if (!jsonToComp) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        jsonToComp = env->GetStaticMethodID(serCls, "func_150699_a",
-            "(Ljava/lang/String;)Lnet/minecraft/util/IChatComponent;");
+    if (!serCls) {
+      serCls = lc->GetClass("eu$a");
+    }
+    if (!serCls) {
+      jclass tmp = env->FindClass("eu$a");
+      if (tmp) {
+        serCls = (jclass)env->NewGlobalRef(tmp);
+        env->DeleteLocalRef(tmp);
       }
       if (env->ExceptionCheck()) env->ExceptionClear();
     }
+    if (!serCls) {
+      jclass tmp = env->FindClass("net/minecraft/util/IChatComponent$Serializer");
+      if (tmp) {
+        serCls = (jclass)env->NewGlobalRef(tmp);
+        env->DeleteLocalRef(tmp);
+      }
+      if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+
+    jmethodID jsonToComp = nullptr;
+    if (serCls) {
+      const char *methodNames[] = { "jsonToComponent", "func_150699_a", "a" };
+      const char *signatures[] = {
+        "(Ljava/lang/String;)Lnet/minecraft/util/IChatComponent;",
+        "(Ljava/lang/String;)Leu;"
+      };
+
+      for (const char *name : methodNames) {
+        for (const char *sig : signatures) {
+          jsonToComp = env->GetStaticMethodID(serCls, name, sig);
+          if (env->ExceptionCheck()) env->ExceptionClear();
+          if (jsonToComp) break;
+        }
+        if (jsonToComp) break;
+      }
+    }
     if (!jsonToComp) {
+      Logger::hoverDebug("[ChatSDK] showJsonMessage failed: Serializer class or jsonToComponent method not found (serCls=%p)", serCls);
       env->DeleteLocalRef(chatGui);
       goto fall;
     }
@@ -231,6 +258,7 @@ bool ChatSDK::showJsonMessage(const std::string &json,
     jobject component = env->CallStaticObjectMethod(serCls, jsonToComp,
                                                      jsonStr);
     if (env->ExceptionCheck()) {
+      Logger::hoverDebug("[ChatSDK] showJsonMessage: JNI exception during jsonToComponent! JSON: %s", json.c_str());
       Logger::error("ChatSDK::showJsonMessage: JNI exception occurred when deserializing json = %s", json.c_str());
       env->ExceptionClear();
       env->DeleteLocalRef(jsonStr);
@@ -239,12 +267,14 @@ bool ChatSDK::showJsonMessage(const std::string &json,
     }
     env->DeleteLocalRef(jsonStr);
     if (!component) {
+      Logger::hoverDebug("[ChatSDK] showJsonMessage: jsonToComponent returned null for JSON: %s", json.c_str());
       env->DeleteLocalRef(chatGui);
       goto fall;
     }
 
     jclass gncCls = lc->GetClass("net.minecraft.client.gui.GuiNewChat");
     if (!gncCls) {
+      Logger::hoverDebug("[ChatSDK] showJsonMessage: GuiNewChat class not found");
       env->DeleteLocalRef(component);
       env->DeleteLocalRef(chatGui);
       goto fall;
@@ -258,13 +288,17 @@ bool ChatSDK::showJsonMessage(const std::string &json,
     if (!print) print = lc->FindMethodBySignature(gncCls, "(Leu;)V");
 
     if (print) {
+      Logger::hoverDebug("[ChatSDK] showJsonMessage SUCCESS: Printing JSON chat component");
       env->CallVoidMethod(chatGui, print, component);
+    } else {
+      Logger::hoverDebug("[ChatSDK] showJsonMessage FAILED: printChatMessage method not found on GuiNewChat");
     }
     env->DeleteLocalRef(component);
     env->DeleteLocalRef(chatGui);
     return true;
   }
 fall:
+  Logger::hoverDebug("[ChatSDK] showJsonMessage FALLBACK to raw text message: %s", fallback.c_str());
   return fallback.empty() ? false : callAddChatMessage(fallback);
 }
 
@@ -365,6 +399,9 @@ bool ChatSDK::showTagsMessage(const std::string &msg, const std::vector<std::pai
     showTextAction = env->GetStaticObjectField(actionCls, showTextField);
   }
 
+  Logger::hoverDebug("[HoverDebug] showTagsMessage resolution: append=%p, getStyle=%p, setHover=%p, heCtor=%p, showTextAction=%p",
+                appendSibling, getChatStyle, setChatHoverEvent, heCtor, showTextAction);
+
   if (appendSibling && getChatStyle && setChatHoverEvent && heCtor && showTextAction) {
     for (const auto &tag : tags) {
       jstring jtagText = env->NewStringUTF(tag.first.c_str());
@@ -393,6 +430,7 @@ bool ChatSDK::showTagsMessage(const std::string &msg, const std::vector<std::pai
       env->DeleteLocalRef(tagComp);
     }
   } else {
+    Logger::hoverDebug("[HoverDebug] showTagsMessage FAILED JNI resolution!");
     Logger::error("ChatSDK::showTagsMessage: Failed resolving JNI symbols! append=%p, getStyle=%p, setHover=%p, heCtor=%p, showTextAction=%p",
                   appendSibling, getChatStyle, setChatHoverEvent, heCtor, showTextAction);
   }

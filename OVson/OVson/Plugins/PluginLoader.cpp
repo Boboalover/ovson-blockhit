@@ -7,6 +7,9 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <filesystem>
+#include <unordered_map>
+
+EXTERN_C IMAGE_DOS_HEADER __ImageBase;
 
 namespace fs = std::filesystem;
 
@@ -60,7 +63,7 @@ namespace PluginLoader {
             fs::create_directories(pluginsDir);
         }
 
-        HMODULE hMod = GetModuleHandleW(L"OVson.dll");
+        HMODULE hMod = (HMODULE)&__ImageBase;
         if (hMod) {
             HRSRC hRes = FindResourceW(hMod, MAKEINTRESOURCEW(IDR_OVSON_API_JAR), MAKEINTRESOURCEW(10));
             if (hRes) {
@@ -75,7 +78,7 @@ namespace PluginLoader {
                             fclose(f);
                             Logger::info("[PluginLoader] Successfully extracted/updated OVsonAPI.jar from resources.");
                         } else {
-                            Logger::error("[PluginLoader] Failed to write extracted OVsonAPI.jar.");
+                            Logger::info("[PluginLoader] Failed to write extracted OVsonAPI.jar. It may be locked by the JVM on re-inject.");
                         }
                     }
                 }

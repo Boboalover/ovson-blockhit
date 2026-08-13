@@ -3,6 +3,7 @@
 #include "../Java.h"
 #include "../Logic/BedDefense/BedDefenseManager.h"
 #include "../Logic/StatsTracker.h"
+#include "../Logic/StatsTracker.internal.h"
 #include "../ClickGUI/ClickGUI.h"
 #include "../Services/AbyssService.h"
 #include "../Services/PrismService.h"
@@ -22,7 +23,9 @@
 #include <jni.h>
 #include <mutex>
 #include <sstream>
+#include <thread>
 #include <unordered_map>
+#include "../Net/Http.h"
 
 static std::string escapeJson(const std::string &str) {
   std::string result;
@@ -145,6 +148,8 @@ void cmd_mode(const std::string &args) {
   ChatSDK::showPrefixed("usage: " + Config::getCommandPrefix() +
                         "mode bedwars|skywars|duels");
 }
+
+
 void cmd_ovmode(const std::string &args) {
   std::string a = args;
   while (!a.empty() && a.front() == ' ')
@@ -267,6 +272,14 @@ void cmd_debugging(const std::string &args) {
                         "debugging on|off");
 }
 
+void cmd_localname(const std::string &args) {
+    if (OVson::g_localName.empty()) {
+        ChatSDK::showPrefixed("§cLocal name is currently EMPTY.");
+    } else {
+        ChatSDK::showPrefixed("§aLocal name is: §f" + OVson::g_localName);
+    }
+}
+
 void cmd_stats(const std::string &args) {
   std::string playerName = args;
   while (!playerName.empty() && playerName.front() == ' ')
@@ -274,9 +287,17 @@ void cmd_stats(const std::string &args) {
   while (!playerName.empty() && playerName.back() == ' ')
     playerName.pop_back();
 
+  bool silent = false;
+  if (playerName.find("-s ") == 0) {
+      silent = true;
+      playerName = playerName.substr(3);
+      while (!playerName.empty() && playerName.front() == ' ')
+          playerName.erase(playerName.begin());
+  }
+
   if (playerName.empty()) {
     ChatSDK::showPrefixed("§cusage: §f" + Config::getCommandPrefix() +
-                          "stats <player>");
+                          "stats [-s] <player>");
     return;
   }
 
@@ -288,7 +309,9 @@ void cmd_stats(const std::string &args) {
     return;
   }
 
-  ChatSDK::showPrefixed("§7Fetching stats for §f" + playerName + "§7...");
+  if (!silent) {
+    ChatSDK::showPrefixed("§7Fetching stats for §f" + playerName + "§7...");
+  }
 
   std::thread([playerName, apiKey, keyless]() {
     SafeGuard::installSehTranslator();
@@ -425,6 +448,11 @@ void cmd_stats(const std::string &args) {
         return "§c"; // default plus color
       };
 
+      std::string activeRank = stats.newPackageRank;
+      if (activeRank.empty()) {
+        activeRank = stats.packageRank;
+      }
+
       std::string rankDisplay = "§7"; // default gray name
       if (!stats.prefix.empty()) {
         rankDisplay = stats.prefix + " ";
@@ -442,14 +470,14 @@ void cmd_stats(const std::string &args) {
       } else if (stats.monthlyPackageRank == "SUPERSTAR") {
         std::string pc = getRankColor(stats.rankPlusColor);
         rankDisplay = "§6[MVP" + pc + "++§6] ";
-      } else if (stats.newPackageRank == "MVP_PLUS") {
+      } else if (activeRank == "MVP_PLUS") {
         std::string pc = getRankColor(stats.rankPlusColor);
         rankDisplay = "§b[MVP" + pc + "+§b] ";
-      } else if (stats.newPackageRank == "MVP") {
+      } else if (activeRank == "MVP") {
         rankDisplay = "§b[MVP] ";
-      } else if (stats.newPackageRank == "VIP_PLUS") {
+      } else if (activeRank == "VIP_PLUS") {
         rankDisplay = "§a[VIP§6+§a] ";
-      } else if (stats.newPackageRank == "VIP") {
+      } else if (activeRank == "VIP") {
         rankDisplay = "§a[VIP] ";
       }
 
@@ -472,6 +500,8 @@ void cmd_stats(const std::string &args) {
         std::string t = raw;
         for (auto &c : t)
           c = toupper(c);
+        if (t.find("REPLAY") != std::string::npos || t.find("REPLAYS_NEEDED") != std::string::npos)
+          return "§6[RN]";
         if (t.find("BLATANT") != std::string::npos)
           return "§4[BC]";
         if (t.find("CLOSET") != std::string::npos)
@@ -597,9 +627,11 @@ void cmd_stats(const std::string &args) {
       }
 
       if (!tags.empty()) {
+        Logger::hoverDebug("[StatsCmd] .stats generating JSON message with %zu tags", tags.size());
         std::string json = "{\"text\":\"\",\"extra\":[";
         json += "{\"text\":\"" + escapeJson(msg + " §7[§fTags§7]") + "\"}";
         for (const auto &tag : tags) {
+          Logger::hoverDebug("  -> JSON tag: text='%s', reason='%s'", tag.text.c_str(), tag.reason.c_str());
           json += ",{\"text\":\" " + escapeJson(tag.text) + "\",\"hoverEvent\":{\"action\":\"show_text\",\"value\":\"" + escapeJson(tag.reason) + "\"}}";
         }
         json += "]}";
@@ -1188,6 +1220,69 @@ void cmd_lookat(const std::string &args) {
   }
 }
 
+void cmd_urchin(const std::string &args) {
+  std::string playerName = args;
+  while (!playerName.empty() && playerName.front() == ' ') playerName.erase(playerName.begin());
+  while (!playerName.empty() && playerName.back() == ' ') playerName.pop_back();
+
+  if (playerName.empty()) {
+    ChatSDK::showPrefixed("§cusage: §f" + Config::getCommandPrefix() + "urchin <player>");
+    return;
+  }
+
+  ChatSDK::showPrefixed("§7Checking Urchin blacklist for §f" + playerName + "§7...");
+
+  std::thread([playerName]() {
+    SafeGuard::installSehTranslator();
+    SafeGuard::run("Commands::urchinLookup", [&]() {
+      auto uT = Urchin::getPlayerTags(playerName, true);
+      if (uT && !uT->tags.empty()) {
+        std::string res = "§4[Urchin] §c" + playerName + " is blacklisted!";
+        for (const auto& tag : uT->tags) {
+            res += "\n§7- §f" + tag.type + "§7: " + tag.reason;
+        }
+        RenderHook::enqueueTask([res]() { ChatSDK::showPrefixed(res); });
+      } else {
+        RenderHook::enqueueTask([playerName]() { ChatSDK::showPrefixed("§a[Urchin] §f" + playerName + " is clean."); });
+      }
+    });
+  }).detach();
+}
+
+void cmd_seraph(const std::string &args) {
+  std::string playerName = args;
+  while (!playerName.empty() && playerName.front() == ' ') playerName.erase(playerName.begin());
+  while (!playerName.empty() && playerName.back() == ' ') playerName.pop_back();
+
+  if (playerName.empty()) {
+    ChatSDK::showPrefixed("§cusage: §f" + Config::getCommandPrefix() + "seraph <player>");
+    return;
+  }
+
+  ChatSDK::showPrefixed("§7Checking Seraph blacklist for §f" + playerName + "§7...");
+
+  std::thread([playerName]() {
+    SafeGuard::installSehTranslator();
+    SafeGuard::run("Commands::seraphLookup", [&]() {
+      auto uOpt = Hypixel::getUuidByName(playerName);
+      if (!uOpt) {
+          RenderHook::enqueueTask([playerName]() { ChatSDK::showPrefixed("§cPlayer not found: §f" + playerName); });
+          return;
+      }
+      auto sT = Seraph::getPlayerTags(playerName, *uOpt, true);
+      if (sT && !sT->tags.empty()) {
+        std::string res = "§4[Seraph] §c" + playerName + " is blacklisted!";
+        for (const auto& tag : sT->tags) {
+            res += "\n§7- §f" + tag.type + "§7: " + tag.reason;
+        }
+        RenderHook::enqueueTask([res]() { ChatSDK::showPrefixed(res); });
+      } else {
+        RenderHook::enqueueTask([playerName]() { ChatSDK::showPrefixed("§a[Seraph] §f" + playerName + " is clean."); });
+      }
+    });
+  }).detach();
+}
+
 void cmd_clearcache(const std::string &args) {
   (void)args;
   OVson::clearAllCaches();
@@ -1214,21 +1309,6 @@ void cmd_commands(const std::string &args) {
 }
 
 void cmd_teamreport(const std::string &args) {
-  std::unordered_map<std::string, std::vector<Hypixel::PlayerStats>> teamGroups;
-  {
-    std::lock_guard<std::mutex> lock(OVson::g_statsMutex);
-    for (const auto &pair : OVson::g_playerStatsMap) {
-      const auto &st = pair.second;
-      std::string team = st.teamColor.empty() ? "Unknown" : st.teamColor;
-      teamGroups[team].push_back(st);
-    }
-  }
-
-  if (teamGroups.empty()) {
-    ChatSDK::showPrefixed("§cNo player stats available. Are you in a game?");
-    return;
-  }
-
   std::string channel = Config::getTeamReportChannel();
   if (!args.empty()) {
     std::string argLower = args;
@@ -1242,35 +1322,9 @@ void cmd_teamreport(const std::string &args) {
       channel = "/shout";
   }
 
-  const char *S = "\xC2\xA7";
   ChatSDK::showPrefixed(std::string("§aSending team report via §f") + channel +
                         "§a...");
-
-  for (const auto &tg : teamGroups) {
-    const std::string &teamName = tg.first;
-    const auto &players = tg.second;
-
-    int totalFk = 0, totalFd = 0, totalWins = 0;
-    int count = (int)players.size();
-    for (const auto &p : players) {
-      totalFk += p.bedwarsFinalKills;
-      totalFd += p.bedwarsFinalDeaths;
-      totalWins += p.bedwarsWins;
-    }
-
-    float avgFkdr =
-        (totalFd > 0) ? (float)totalFk / (float)totalFd : (float)totalFk;
-    float avgWins = (count > 0) ? (float)totalWins / (float)count : 0.0f;
-    float avgFk = (count > 0) ? (float)totalFk / (float)count : 0.0f;
-
-    std::ostringstream oss;
-    oss << channel << " [" << teamName << "] "
-        << "FKDR: " << std::fixed << std::setprecision(2) << avgFkdr
-        << " | Wins: " << (int)avgWins << " | FK: " << (int)avgFk;
-
-    ChatSDK::sendClientChat(oss.str());
-    Sleep(600);
-  }
+  OVson::sendTeamStatsReport(true, channel);
 }
 
 void cmd_play_eight_one(const std::string &args) {
@@ -1305,8 +1359,10 @@ void RegisterDefaultCommands() {
   CommandRegistry::instance().registerCommand("api", cmd_api);
   CommandRegistry::instance().registerCommand("mode", cmd_mode);
   CommandRegistry::instance().registerCommand("ovmode", cmd_ovmode);
+
   CommandRegistry::instance().registerCommand("tab", cmd_tab);
   CommandRegistry::instance().registerCommand("debugging", cmd_debugging);
+  CommandRegistry::instance().registerCommand("localname", cmd_localname);
   CommandRegistry::instance().registerCommand("stats", cmd_stats);
   CommandRegistry::instance().registerCommand("clickgui", cmd_clickgui);
   CommandRegistry::instance().registerCommand("bedplates", cmd_bedplates);
@@ -1325,4 +1381,6 @@ void RegisterDefaultCommands() {
   CommandRegistry::instance().registerCommand("3s", cmd_play_four_three);
   CommandRegistry::instance().registerCommand("4s", cmd_play_four_four);
   CommandRegistry::instance().registerCommand("4v4", cmd_play_four_four_rush);
+  CommandRegistry::instance().registerCommand("urchin", cmd_urchin);
+  CommandRegistry::instance().registerCommand("seraph", cmd_seraph);
 }

@@ -42,7 +42,7 @@ static std::mutex g_sessionMutex;
 
 bool Http::get(const std::string &url, std::string &responseBody,
                const std::string &headerName, const std::string &headerValue,
-               const std::string &userAgent) {
+               const std::string &userAgent, DWORD* outStatusCode) {
   std::wstring host, path;
   INTERNET_PORT port;
   bool https;
@@ -84,6 +84,8 @@ bool Http::get(const std::string &url, std::string &responseBody,
 
   HINTERNET hConnect = WinHttpConnect(g_hSession, host.c_str(), port, 0);
   if (!hConnect) {
+    FILE* dbg = nullptr; fopen_s(&dbg, "C:\\Users\\HPC1\\Desktop\\http_debug.log", "a");
+    if (dbg) { fprintf(dbg, "WinHttpConnect failed: %lu\n", GetLastError()); fclose(dbg); }
     return false;
   }
   DWORD flags = https ? WINHTTP_FLAG_SECURE : 0;
@@ -94,6 +96,10 @@ bool Http::get(const std::string &url, std::string &responseBody,
     WinHttpCloseHandle(hConnect);
     return false;
   }
+
+  std::wstring acceptHdr = L"Accept: application/json\r\n";
+  WinHttpAddRequestHeaders(hRequest, acceptHdr.c_str(), (DWORD)-1L,
+                           WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
 
   if (!userAgent.empty()) {
     std::wstring ua(userAgent.begin(), userAgent.end());
@@ -138,6 +144,8 @@ bool Http::get(const std::string &url, std::string &responseBody,
   WinHttpQueryHeaders(
       hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
       WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &len, WINHTTP_NO_HEADER_INDEX);
+
+  if (outStatusCode) *outStatusCode = statusCode;
 
   responseBody.clear();
   for (;;) {

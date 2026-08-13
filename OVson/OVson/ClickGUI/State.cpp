@@ -63,8 +63,6 @@ float s_accentVal = 0.96f;
 bool  s_accentDragSV = false;
 bool  s_accentDragHue = false;
 bool  s_accentInit = false;
-bool  s_chromaEnabled = false;
-float s_chromaSpeed = 60.0f;
 
 int   s_colorSelectedStat = 0;
 bool  s_colorPickerOpen = false;

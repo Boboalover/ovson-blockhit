@@ -27,6 +27,7 @@ bool g_initialized = false;
 int g_mode = 0;
 bool g_inHypixelGame = false;
 bool g_inPreGameLobby = false;
+bool g_inReplay = false;
 
 std::string g_lastOnlineLine;
 std::vector<std::string> g_onlinePlayers;
@@ -54,6 +55,7 @@ ULONGLONG g_bootstrapStartTick = 0;
 ULONGLONG g_preGameDetectTick = 0;
 std::string g_localTeam;
 std::string g_localName;
+std::unordered_map<std::string, ULONGLONG> g_autoStatsCooldowns;
 std::unordered_map<std::string, int> g_teamProbeTries;
 bool g_teamReportSent = false;
 
@@ -141,6 +143,7 @@ bool shouldAlert(const std::string &name) {
 
 bool isInHypixelGame() { return g_inHypixelGame; }
 bool isInPreGameLobby() { return g_inPreGameLobby; }
+bool isInReplay() { return g_inReplay; }
 bool shouldAutoFetchTags() {
   return Config::isTagsEnabled() &&
          (g_inPreGameLobby || g_inHypixelGame);
@@ -437,32 +440,40 @@ bool isChatOpen() {
   if (!env)
     return false;
 
-  jclass mcCls = lc->GetClass("net.minecraft.client.Minecraft");
-  if (!mcCls)
-    return false;
+  static jclass mcCls = nullptr;
+  static jfieldID f_mc = nullptr;
+  static jfieldID f_screen = nullptr;
+  static jclass chatCls = nullptr;
+  static bool initialized = false;
 
-  jfieldID f_mc = lc->GetStaticFieldID(mcCls, "theMinecraft",
-                                       "Lnet/minecraft/client/Minecraft;",
-                                       "field_71432_P", "S", "Lave;");
-  if (!f_mc)
-    return false;
+  if (!initialized) {
+    mcCls = lc->GetClass("net.minecraft.client.Minecraft");
+    if (mcCls) {
+      mcCls = (jclass)env->NewGlobalRef(mcCls);
+      f_mc = lc->GetStaticFieldID(mcCls, "theMinecraft",
+                                         "Lnet/minecraft/client/Minecraft;",
+                                         "field_71432_P", "S", "Lave;");
+      f_screen = lc->GetFieldID(mcCls, "currentScreen",
+                                       "Lnet/minecraft/client/gui/GuiScreen;",
+                                       "field_71462_r", "m", "Laxu;");
+      if (!f_screen)
+        f_screen = lc->FindFieldBySignature(mcCls, "Lnet/minecraft/client/gui/GuiScreen;");
+      if (!f_screen)
+        f_screen = lc->FindFieldBySignature(mcCls, "Laxu;");
+    }
+
+    jclass localChatCls = lc->GetClass("net.minecraft.client.gui.GuiChat");
+    if (localChatCls) {
+      chatCls = (jclass)env->NewGlobalRef(localChatCls);
+    }
+    initialized = true;
+  }
+
+  if (!mcCls || !f_mc || !f_screen || !chatCls) return false;
 
   jobject mcObj = env->GetStaticObjectField(mcCls, f_mc);
   if (!mcObj)
     return false;
-
-  jfieldID f_screen = lc->GetFieldID(mcCls, "currentScreen",
-                                     "Lnet/minecraft/client/gui/GuiScreen;",
-                                     "field_71462_r", "m", "Laxu;");
-  if (!f_screen)
-    f_screen = lc->FindFieldBySignature(mcCls, "Lnet/minecraft/client/gui/GuiScreen;");
-  if (!f_screen)
-    f_screen = lc->FindFieldBySignature(mcCls, "Laxu;");
-
-  if (!f_screen) {
-    env->DeleteLocalRef(mcObj);
-    return false;
-  }
 
   jobject screen = env->GetObjectField(mcObj, f_screen);
   env->DeleteLocalRef(mcObj);
@@ -470,11 +481,7 @@ bool isChatOpen() {
   if (!screen)
     return false;
 
-  jclass chatCls = lc->GetClass("net.minecraft.client.gui.GuiChat");
-  bool isChat = false;
-  if (chatCls) {
-    isChat = env->IsInstanceOf(screen, chatCls);
-  }
+  bool isChat = env->IsInstanceOf(screen, chatCls);
   env->DeleteLocalRef(screen);
   return isChat;
 }

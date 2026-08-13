@@ -30,7 +30,6 @@ void renderColors(TabCtx &ctx) {
   const bool  clickEvent = ctx.clickEvent;
   const float alpha = ctx.alpha;
 
-  // ── Accent colour picker (spec §3 / §4.5) ──────────────────────
   {
     using namespace ClickGUITheme;
     auto hsv32 = [](float h, float s, float v) -> uint32_t {
@@ -62,7 +61,6 @@ void renderColors(TabCtx &ctx) {
     drawSectionLabel(cx, cy, "Accent Color", alpha);
     cy += 26;
 
-    // Chroma cycle is updated globally inside ClickGUI::render
 
     float svX = cx, svY = cy;
     float svW = g_w - 230.0f; if (svW < 180.0f) svW = 180.0f;
@@ -72,22 +70,18 @@ void renderColors(TabCtx &ctx) {
 
     glDisable(GL_TEXTURE_2D); glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glShadeModel(GL_SMOOTH);
-    // L1: base hue fill.
     glBegin(GL_QUADS);
       glColor4f(hr,hg,hb,alpha); glVertex2f(svX,svY); glVertex2f(svX+svW,svY);
       glVertex2f(svX+svW,svY+svH); glVertex2f(svX,svY+svH);
     glEnd();
-    // L2: white horizontal (left a=1 -> right a=0).
     glBegin(GL_QUADS);
       glColor4f(1,1,1,alpha); glVertex2f(svX,svY); glVertex2f(svX,svY+svH);
       glColor4f(1,1,1,0);     glVertex2f(svX+svW,svY+svH); glVertex2f(svX+svW,svY);
     glEnd();
-    // L3: black vertical (top a=0 -> bottom a=1).
     glBegin(GL_QUADS);
       glColor4f(0,0,0,0);     glVertex2f(svX,svY); glVertex2f(svX+svW,svY);
       glColor4f(0,0,0,alpha); glVertex2f(svX+svW,svY+svH); glVertex2f(svX,svY+svH);
     glEnd();
-    // SV cursor.
     float curX = svX + s_accentSat*svW, curY = svY + (1.0f-s_accentVal)*svH;
     glShadeModel(GL_FLAT); glColor4f(1,1,1,alpha); glLineWidth(1.5f);
     glBegin(GL_LINE_LOOP);
@@ -106,7 +100,6 @@ void renderColors(TabCtx &ctx) {
       } else s_accentDragSV = false;
     }
 
-    // Hue strip (full width, 13px) with a 6-segment gradient.
     float hueX = svX, hueY = svY + svH + 10.0f, hueW = svW, hueH = 13.0f;
     const float stops[7][3] = {{1,0,0},{1,1,0},{0,1,0},{0,1,1},{0,0,1},{1,0,1},{1,0,0}};
     glShadeModel(GL_SMOOTH);
@@ -119,7 +112,6 @@ void renderColors(TabCtx &ctx) {
         glColor4f(stops[i][0],stops[i][1],stops[i][2],alpha);     glVertex2f(x0,hueY+hueH);
       glEnd();
     }
-    // Hue cursor.
     float hCurX = hueX + s_accentHue*hueW;
     glShadeModel(GL_FLAT); glColor4f(1,1,1,alpha); glLineWidth(1.5f);
     glBegin(GL_LINE_LOOP);
@@ -140,7 +132,6 @@ void renderColors(TabCtx &ctx) {
 
     cy = hueY + hueH + 16.0f;
 
-    // Swatch + hex.
     uint32_t accCol = hsv32(s_accentHue, s_accentSat, s_accentVal);
     glDisable(GL_TEXTURE_2D);
     RenderUtils::drawRoundedRect(cx, cy, 26, 26, 8.0f, accCol, alpha);
@@ -150,7 +141,6 @@ void renderColors(TabCtx &ctx) {
              (accCol>>16)&0xFF, (accCol>>8)&0xFF, accCol&0xFF);
     g_guiFont.drawString(cx + 34, cy + 7, accHex, applyAlpha(0xFFFFFFFF, alpha), 0.46f);
 
-    // Presets (spec §3.6) — 30x30, gap 8.
     const uint32_t presets[8] = {
       0xFF3D6EF5, 0xFF19B0FF, 0xFF2EE6B8, 0xFF43E08B,
       0xFF9B6BF5, 0xFFFA3EC0, 0xFFFF5436, 0xFFFFA319 };
@@ -171,28 +161,29 @@ void renderColors(TabCtx &ctx) {
     }
     cy += 40.0f;
 
-    // Chroma toggle + speed.
     bool hChroma = isHovered(mx,my,cx,cy,16,16);
     glDisable(GL_TEXTURE_2D);
-    drawSwitch(900, cx, cy, s_chromaEnabled, hChroma, alpha);
+    bool chromaEnabled = Config::isChromaEnabled();
+    drawSwitch(900, cx, cy, chromaEnabled, hChroma, alpha);
     glEnable(GL_TEXTURE_2D);
-    g_guiFont.drawString(cx + 54, cy + 7, "Rainbow / Chroma",
+    g_guiFont.drawString(cx + 54, cy + 7, "Rainbow",
                          applyAlpha(0xFFFFFFFF, alpha), 0.44f);
     bool hChromaCard = isHovered(mx,my,cx,cy,52,25);
-    if (clickEvent && hChromaCard) s_chromaEnabled = !s_chromaEnabled;
+    if (clickEvent && hChromaCard) Config::setChromaEnabled(!chromaEnabled);
     cy += 34.0f;
-    if (s_chromaEnabled) {
+    if (Config::isChromaEnabled()) {
       g_guiFont.drawString(cx, cy + 2, "Speed", applyAlpha(0xFFA0A0A5, alpha), 0.4f);
       glDisable(GL_TEXTURE_2D);
-      drawSlider(901, cx + 50, cy, 150, 14, s_chromaSpeed, 10.0f, 180.0f,
+      float speed = Config::getChromaSpeed();
+      drawSlider(901, cx + 50, cy, 150, 14, speed, 10.0f, 180.0f,
                  mx, my, lClick, alpha);
+      if (speed != Config::getChromaSpeed()) Config::setChromaSpeed(speed);
       glEnable(GL_TEXTURE_2D);
-      char spB[16]; snprintf(spB, sizeof(spB), "%.0f/s", s_chromaSpeed);
+      char spB[16]; snprintf(spB, sizeof(spB), "%.0f/s", speed);
       g_guiFont.drawString(cx + 210, cy + 2, spB, applyAlpha(0xFFFFFFFF, alpha), 0.4f);
       cy += 28.0f;
     }
 
-    // Apply live + persist on change.
     if (changed) {
       Config::setThemeColor(hsv32(s_accentHue, s_accentSat, s_accentVal));
       Config::save();

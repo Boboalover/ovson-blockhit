@@ -12,67 +12,91 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <thread>
+#include <sstream>
+#include <iomanip>
+#include "../Render/RenderHook.h"
 
 namespace OVson {
 
-void sendTeamStatsReport() {
-  if (g_teamReportSent || !Config::isTeamReportEnabled() || g_localTeam.empty())
-    return;
+void sendTeamStatsReport(bool force, std::string channelOverride) {
+  if (Config::isGlobalDebugEnabled() || force) {
+    Logger::info("[OVson DEBUG] sendTeamStatsReport triggered. force=%d g_teamReportSent=%d", force, g_teamReportSent);
+  }
 
-  std::vector<Hypixel::PlayerStats> teammates;
+  if (!force) {
+    if (g_teamReportSent || !Config::isTeamReportEnabled())
+      return;
+    if (g_localTeam.empty()) {
+      if (Config::isGlobalDebugEnabled()) {
+        Logger::info("[OVson DEBUG] sendTeamStatsReport aborted: g_localTeam is empty! (Is the scoreboard team mapped?)");
+      }
+      return;
+    }
+  }
+
+  std::unordered_map<std::string, std::vector<Hypixel::PlayerStats>> teamGroups;
+  int unknownCount = 0;
   {
     std::lock_guard<std::mutex> lock(g_statsMutex);
     for (const auto &pair : g_playerStatsMap) {
+      const auto &st = pair.second;
+      std::string team = "Unknown";
       auto it = g_playerTeamColor.find(pair.first);
-      if (it != g_playerTeamColor.end() && it->second == g_localTeam) {
-        teammates.push_back(pair.second);
+      if (it != g_playerTeamColor.end() && !it->second.empty()) {
+        team = it->second;
+      }
+      if (team != "Unknown") {
+        teamGroups[team].push_back(st);
+      } else {
+        unknownCount++;
       }
     }
   }
 
-  if (teammates.empty())
-    return;
-
-  int totalStars = 0;
-  int totalWins = 0;
-  int totalFK = 0;
-  int totalFD = 0;
-  for (const auto &s : teammates) {
-    totalStars += s.bedwarsStar;
-    totalWins += s.bedwarsWins;
-    totalFK += s.bedwarsFinalKills;
-    totalFD += s.bedwarsFinalDeaths;
+  if (Config::isGlobalDebugEnabled() || force) {
+    Logger::info("[OVson DEBUG] Found %d teams to report. Unknown players: %d", (int)teamGroups.size(), unknownCount);
   }
 
-  int count = (int)teammates.size();
-  double avgStar = (double)totalStars / count;
-  double avgWins = (double)totalWins / count;
-  double teamFkdr =
-      (totalFD == 0) ? (double)totalFK : (double)totalFK / totalFD;
+  if (teamGroups.empty())
+    return;
 
-  std::string channel = Config::getTeamReportChannel();
-  if (channel != "/shout" && channel != "/pc" && channel != "/ac")
-    channel = "/pc";
+  std::string channel = channelOverride.empty() ? Config::getTeamReportChannel() : channelOverride;
 
-  const char *f = "\xC2\xA7"
-                  "f";
-  const char *g = "\xC2\xA7"
-                  "7";
+  if (!force) {
+    g_teamReportSent = true;
+    Logger::info("Automated All-Team Stats Report triggered to %s", channel.c_str());
+  }
 
-  char buf[512];
-  snprintf(
-      buf, sizeof(buf),
-      "%s %sTeam Average %s| %s%.0f* %s| %s%.0f Wins %s| %s%.2f FKDR",
-      channel.c_str(), f, g,
-      StatColors::getMcColor(StatColors::StatType::Star, avgStar), avgStar, g,
-      StatColors::getMcColor(StatColors::StatType::Wins, avgWins), avgWins, g,
-      StatColors::getMcColor(StatColors::StatType::FKDR, teamFkdr), teamFkdr);
+  std::thread([teamGroups, channel]() {
+    for (const auto &tg : teamGroups) {
+      const std::string &teamName = tg.first;
+      const auto &players = tg.second;
 
-  ChatSDK::sendClientChat(buf);
+      int totalFk = 0, totalFd = 0, totalWins = 0;
+      int count = (int)players.size();
+      for (const auto &p : players) {
+        totalFk += p.bedwarsFinalKills;
+        totalFd += p.bedwarsFinalDeaths;
+        totalWins += p.bedwarsWins;
+      }
 
-  g_teamReportSent = true;
-  Logger::info("Automated Team Average Stats Report sent to %s",
-               channel.c_str());
+      float avgFkdr =
+          (totalFd > 0) ? (float)totalFk / (float)totalFd : (float)totalFk;
+      float avgWins = (count > 0) ? (float)totalWins / (float)count : 0.0f;
+      float avgFk = (count > 0) ? (float)totalFk / (float)count : 0.0f;
+
+      std::ostringstream oss;
+      oss << channel << " [" << teamName << "] "
+          << "FKDR: " << std::fixed << std::setprecision(2) << avgFkdr
+          << " | Wins: " << (int)avgWins
+          << " | FK: " << (int)avgFk;
+
+      std::string msg = oss.str();
+      RenderHook::enqueueTask([msg]() { ChatSDK::sendClientChat(msg); });
+      Sleep(600);
+    }
+  }).detach();
 }
 
 void pruneStatsCache() {

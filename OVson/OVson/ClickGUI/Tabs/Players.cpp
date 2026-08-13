@@ -117,7 +117,10 @@ void renderPlayers(TabCtx &ctx) {
         else if (r.rankPlusColor == "YELLOW") plusCol = "\xC2\xA7" "e";
         return "\xC2\xA7" "6[MVP" + plusCol + "++" + "\xC2\xA7" "6]";
       }
-      if (r.newPackageRank == "MVP_PLUS") {
+      std::string activeRank = r.newPackageRank;
+      if (activeRank.empty()) activeRank = r.packageRank;
+
+      if (activeRank == "MVP_PLUS") {
         std::string plusCol = "\xC2\xA7" "c";
         if (r.rankPlusColor == "GOLD")        plusCol = "\xC2\xA7" "6";
         else if (r.rankPlusColor == "AQUA")   plusCol = "\xC2\xA7" "b";
@@ -132,9 +135,9 @@ void renderPlayers(TabCtx &ctx) {
         else if (r.rankPlusColor == "YELLOW") plusCol = "\xC2\xA7" "e";
         return "\xC2\xA7" "b[MVP" + plusCol + "+" + "\xC2\xA7" "b]";
       }
-      if (r.newPackageRank == "MVP")      return "\xC2\xA7" "b[MVP]";
-      if (r.newPackageRank == "VIP_PLUS") return "\xC2\xA7" "a[VIP\xC2\xA7" "6+\xC2\xA7" "a]";
-      if (r.newPackageRank == "VIP")      return "\xC2\xA7" "a[VIP]";
+      if (activeRank == "MVP")      return "\xC2\xA7" "b[MVP]";
+      if (activeRank == "VIP_PLUS") return "\xC2\xA7" "a[VIP\xC2\xA7" "6+\xC2\xA7" "a]";
+      if (activeRank == "VIP")      return "\xC2\xA7" "a[VIP]";
       return "\xC2\xA7" "7";
     };
 

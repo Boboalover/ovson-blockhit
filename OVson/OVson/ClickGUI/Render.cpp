@@ -470,6 +470,8 @@ static void ensureLbWindows() {
                         &Config::setTechEnabled, {}});
       w.mods.push_back({"Notifications", &Config::isNotificationsEnabled,
                         &Config::setNotificationsEnabled, {}});
+      w.mods.push_back({"Lobby Mention Stats", &Config::isLobbyMentionStatsEnabled,
+                        &Config::setLobbyMentionStatsEnabled, {}});
       s_lbWins.push_back(std::move(w));
     }
     {
@@ -573,10 +575,10 @@ static void ensureLbWindows() {
                                    &Config::setLiquidGlassCardEdgeWidth, 0.0f, 1.0f),
                          subSlider("Opacity", &Config::getLiquidGlassDarkness,
                                    &Config::setLiquidGlassDarkness, 0.0f, 1.0f)}});
-      w.mods.push_back({"Chroma Accent", []{ return ClickGUIState::s_chromaEnabled; },
-                        [](bool b) { ClickGUIState::s_chromaEnabled = b; },
-                        {subSlider("Chroma Speed", []{ return ClickGUIState::s_chromaSpeed; },
-                                   [](float v) { ClickGUIState::s_chromaSpeed = v; }, 10.0f, 180.0f, "/s")}});
+      w.mods.push_back({"Chroma Accent", []{ return Config::isChromaEnabled(); },
+                        [](bool b) { Config::setChromaEnabled(b); },
+                        {subSlider("Chroma Speed", []{ return Config::getChromaSpeed(); },
+                                   [](float v) { Config::setChromaSpeed(v); }, 10.0f, 180.0f, "/s")}});
       w.mods.push_back({"GUI Keybind", []{ return false; },
                         [](bool) { ClickGUIState::s_waitingForKey = true; }, {}});
       s_lbWins.push_back(std::move(w));
@@ -1240,13 +1242,13 @@ void ClickGUI::render(HDC hdc) {
       s_accentInit = true;
     }
 
-    if (s_chromaEnabled) {
+    if (Config::isChromaEnabled()) {
       static ULONGLONG s_lastChroma = GetTickCount64();
       ULONGLONG now = GetTickCount64();
       float dt = (now - s_lastChroma) / 1000.0f;
       s_lastChroma = now;
       if (dt > 0 && dt < 1.0f) {
-        s_accentHue = fmodf(s_accentHue + (s_chromaSpeed * dt) / 360.0f, 1.0f);
+        s_accentHue = fmodf(s_accentHue + (Config::getChromaSpeed() * dt) / 360.0f, 1.0f);
       }
       
       float h = s_accentHue;
