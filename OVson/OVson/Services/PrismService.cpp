@@ -201,6 +201,7 @@ PrismService::getPlayerStats(const std::string &uuid) {
   findJsonString(body, "rank", ps.rank);
   findJsonString(body, "monthlyPackageRank", ps.monthlyPackageRank);
   findJsonString(body, "newPackageRank", ps.newPackageRank);
+  findJsonString(body, "packageRank", ps.packageRank);
   findJsonString(body, "rankPlusColor", ps.rankPlusColor);
 
   int networkExp = 0;

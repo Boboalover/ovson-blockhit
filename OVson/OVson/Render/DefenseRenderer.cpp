@@ -644,7 +644,7 @@ void DefenseRenderer::render(void *hdcPtr, double partialTicksManual) {
       if (thirdPersonMode > 0 && thirdPersonDist > 0.01f)
         vz2 -= (double)thirdPersonDist;
 
-      if (vz2 >= -0.05) continue; // behind camera (i fucking hate this)
+      if (vz2 >= -0.05) continue; // behind camera (i fucking hate this) LOL I FIXED IT
 
       ndcX = (f / aspect) * vx / -vz2;
       ndcY = f * vy / -vz2;

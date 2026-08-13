@@ -614,6 +614,7 @@ void StatsOverlay::render(void *hdcPtr) {
               auto getHUDAbbr = [](const std::string &raw) -> std::string {
                   std::string t = raw;
                   for (auto &cc : t) cc = toupper(cc);
+                  if (t.find("REPLAY") != std::string::npos || t.find("REPLAYS_NEEDED") != std::string::npos) return "RN";
                   if (t.find("BLATANT") != std::string::npos) return "BC";
                   if (t.find("CLOSET") != std::string::npos) return "CC";
                   if (t.find("CONFIRMED") != std::string::npos) return "C";
@@ -657,7 +658,8 @@ void StatsOverlay::render(void *hdcPtr) {
                       for (const auto &type : urchinTags) {
                           uint32_t color = colorFromRGB(255, 255, 255);
                           std::string t = type; for (auto &cc : t) cc = toupper(cc);
-                          if (t.find("BLATANT") != std::string::npos) color = colorFromRGB(220, 20, 60);
+                          if (t.find("REPLAY") != std::string::npos || t.find("REPLAYS_NEEDED") != std::string::npos) color = colorFromRGB(255, 170, 0);
+                          else if (t.find("BLATANT") != std::string::npos) color = colorFromRGB(220, 20, 60);
                           else if (t.find("CONFIRMED") != std::string::npos) color = colorFromRGB(148, 0, 211);
                           drawTag(type, color);
                       }

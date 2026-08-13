@@ -11,6 +11,8 @@
 #include "../Utils/Timer.h"
 #include "../Utils/Anticheat/Anticheat.h"
 #include "../ClickGUI/ClickGUI.h"
+#include "../ClickGUI/Helpers.h"
+#include "../Utils/SensitivityFix.h"
 #include <GL/gl.h>
 #include <algorithm>
 #include <iomanip>
@@ -42,12 +44,23 @@ static float g_lastScaledHeight = 1080.0f;
 
 bool isResizeMode() { return g_resizeMode; }
 void setResizeMode(bool resize) { 
+  if (g_resizeMode == resize) return;
   g_resizeMode = resize; 
   if (resize) {
-    ShowCursor(TRUE);
     Render::ClickGUI::setOpen(false);
+    FocusFix::setIngameFocus(false);
+    Render::ClickGUIHelpers::setMouseGrabbed(false);
+    ShowCursor(TRUE);
   } else {
-    ShowCursor(FALSE);
+    g_resizingTab = false;
+    g_draggingTab = false;
+    Config::saveNow();
+
+    FocusFix::setIngameFocus(true);
+    if (Render::ClickGUIHelpers::isIngame()) {
+      ShowCursor(FALSE);
+      Render::ClickGUIHelpers::setMouseGrabbed(true);
+    }
   }
 }
 
@@ -75,11 +88,8 @@ void handleMouseClick(int btn, int state, int x, int y) {
   g_mouseY = (int)my;
   if (!g_resizeMode || btn != 0) return;
 
-  float startX = Config::getBetterTabX();
-  if (startX < 0.0f)
-    startX = std::floor((g_lastScaledWidth - g_currentBoxWidth * Config::getBetterTabScale()) / 2.0f);
-  float startY = Config::getBetterTabY();
-  if (startY < 0.0f) startY = 15.0f;
+  float startX = std::floor((g_lastScaledWidth - g_currentBoxWidth * Config::getBetterTabScale()) / 2.0f);
+  float startY = 15.0f;
   float scale  = Config::getBetterTabScale();
   float scaledBoxW = g_currentBoxWidth  * scale;
   float scaledBoxH = g_currentBoxHeight * scale;
@@ -104,6 +114,7 @@ void handleMouseClick(int btn, int state, int x, int y) {
       Config::setBetterTabX(-1.0f);
       Config::setBetterTabY(-1.0f);
       Config::setBetterTabScale(1.0f);
+      Config::saveNow();
       return;
     }
     float hs = g_hoverScaleSize;
@@ -112,6 +123,9 @@ void handleMouseClick(int btn, int state, int x, int y) {
       g_resizingTab = true;
     }
   } else { // mouse up
+    if (g_resizingTab) {
+      Config::saveNow();
+    }
     g_resizingTab = false;
   }
 }
@@ -123,11 +137,8 @@ void handleMouseMove(int x, int y) {
   g_mouseY = (int)my;
   if (!g_resizeMode) return;
 
-  float startX = Config::getBetterTabX();
-  if (startX < 0.0f)
-    startX = std::floor((g_lastScaledWidth - g_currentBoxWidth * Config::getBetterTabScale()) / 2.0f);
-  float startY = Config::getBetterTabY();
-  if (startY < 0.0f) startY = 15.0f;
+  float startX = std::floor((g_lastScaledWidth - g_currentBoxWidth * Config::getBetterTabScale()) / 2.0f);
+  float startY = 15.0f;
   float scale  = Config::getBetterTabScale();
   float scaledBoxW = g_currentBoxWidth  * scale;
   float scaledBoxH = g_currentBoxHeight * scale;
@@ -156,6 +167,11 @@ struct JCache {
   jfieldID f_theMc = nullptr;
   jfieldID f_gameSettings = nullptr;
   jfieldID f_guiScale = nullptr;
+  jfieldID f_displayWidth = nullptr;
+  jfieldID f_displayHeight = nullptr;
+  jclass srCls = nullptr;
+  jmethodID m_srCtor = nullptr;
+  jmethodID m_srGetScaleFactor = nullptr;
   jfieldID f_fontRenderer = nullptr;
   jmethodID m_drawString = nullptr;
   jmethodID m_getStringWidth = nullptr;
@@ -403,15 +419,6 @@ static void ensureMcFields(JNIEnv *env) {
             lc->GetFieldID(gsCls, "guiScale", "I", "field_71454_cg", "aB");
         if (!g_jc.f_guiScale) {
           env->ExceptionClear();
-          g_jc.f_guiScale = env->GetFieldID(gsCls, "aN", "I");
-        }
-        if (!g_jc.f_guiScale) {
-          env->ExceptionClear();
-          g_jc.f_guiScale = env->GetFieldID(gsCls, "aM", "I");
-        }
-        if (!g_jc.f_guiScale) {
-          env->ExceptionClear();
-          g_jc.f_guiScale = env->GetFieldID(gsCls, "bc", "I");
         }
 
         if (g_jc.f_guiScale)
@@ -422,7 +429,28 @@ static void ensureMcFields(JNIEnv *env) {
         env->DeleteLocalRef(gsCls);
         env->DeleteLocalRef(dummyGs);
       }
+      
+      g_jc.f_displayWidth = lc->GetFieldID(g_jc.mcCls, "displayWidth", "I", "field_71443_c", "d");
+      g_jc.f_displayHeight = lc->GetFieldID(g_jc.mcCls, "displayHeight", "I", "field_71440_d", "e");
+
       env->DeleteLocalRef(dummyMc);
+    }
+  }
+  
+  if (!g_jc.srCls) {
+    g_jc.srCls = lc->GetClass("net.minecraft.client.gui.ScaledResolution");
+    if (!g_jc.srCls) {
+      if (env->ExceptionCheck()) env->ExceptionClear();
+      g_jc.srCls = env->FindClass("avr");
+    }
+    if (g_jc.srCls) {
+      g_jc.srCls = (jclass)env->NewGlobalRef(g_jc.srCls);
+      g_jc.m_srCtor = lc->GetMethodID(g_jc.srCls, "<init>", "(Lnet/minecraft/client/Minecraft;)V", "<init>", "(Lnet/minecraft/client/Minecraft;)V");
+      if (!g_jc.m_srCtor) {
+          if (env->ExceptionCheck()) env->ExceptionClear();
+          g_jc.m_srCtor = env->GetMethodID(g_jc.srCls, "<init>", "(Lave;)V");
+      }
+      g_jc.m_srGetScaleFactor = lc->GetMethodID(g_jc.srCls, "getScaleFactor", "()I", "func_78325_e", "e");
     }
   }
 
@@ -621,55 +649,71 @@ struct RenderCtx {
   int guiScale = 0;
 };
 
+namespace {
+constexpr size_t kWidthCacheMax = 1024;
+struct StringCacheEntry {
+  int width;
+  jstring jt;
+  std::list<std::string>::iterator lruIt;
+};
+std::list<std::string> g_widthLru;
+std::unordered_map<std::string, StringCacheEntry> g_widthCache;
+
+static StringCacheEntry* getCachedString(RenderCtx &ctx, const std::string &text) {
+  if (text.empty()) return nullptr;
+  auto it = g_widthCache.find(text);
+  if (it != g_widthCache.end()) {
+    g_widthLru.splice(g_widthLru.begin(), g_widthLru, it->second.lruIt);
+    return &it->second;
+  }
+  
+  if (!ctx.env) return nullptr;
+  jstring localJt = ctx.env->NewStringUTF(text.c_str());
+  if (!localJt) return nullptr;
+  
+  int w = 0;
+  if (ctx.fontRenderer && g_jc.m_getStringWidth) {
+    w = ctx.env->CallIntMethod(ctx.fontRenderer, g_jc.m_getStringWidth, localJt);
+    if (ctx.env->ExceptionCheck()) ctx.env->ExceptionClear();
+  }
+  
+  jstring globalJt = (jstring)ctx.env->NewGlobalRef(localJt);
+  ctx.env->DeleteLocalRef(localJt);
+  if (!globalJt) return nullptr;
+  
+  if (g_widthCache.size() >= kWidthCacheMax) {
+    while (g_widthCache.size() >= kWidthCacheMax && !g_widthLru.empty()) {
+      auto rmIt = g_widthCache.find(g_widthLru.back());
+      if (rmIt != g_widthCache.end()) {
+        ctx.env->DeleteGlobalRef(rmIt->second.jt);
+        g_widthCache.erase(rmIt);
+      }
+      g_widthLru.pop_back();
+    }
+  }
+  
+  g_widthLru.push_front(text);
+  auto ins = g_widthCache.emplace(text, StringCacheEntry{w, globalJt, g_widthLru.begin()});
+  return &ins.first->second;
+}
+} // namespace
+
 static void drawString(RenderCtx &ctx, const std::string &text, float x,
                        float y, uint32_t color) {
   if (!ctx.env || !ctx.fontRenderer || !g_jc.m_drawString || text.empty())
     return;
-  jstring jt = ctx.env->NewStringUTF(text.c_str());
-  if (!jt)
-    return;
-  ctx.env->CallIntMethod(ctx.fontRenderer, g_jc.m_drawString, jt, x, y,
-                         (jint)color);
+  StringCacheEntry* e = getCachedString(ctx, text);
+  if (!e || !e->jt) return;
+  ctx.env->CallIntMethod(ctx.fontRenderer, g_jc.m_drawString, e->jt, x, y, (jint)color);
   if (ctx.env->ExceptionCheck())
     ctx.env->ExceptionClear();
-  ctx.env->DeleteLocalRef(jt);
 }
-
-namespace {
-constexpr size_t kWidthCacheMax = 1024;
-std::list<std::string> g_widthLru;
-std::unordered_map<std::string,
-                   std::pair<int, std::list<std::string>::iterator>>
-    g_widthCache;
-} // namespace
 
 static int measure(RenderCtx &ctx, const std::string &text) {
   if (!ctx.env || !ctx.fontRenderer || !g_jc.m_getStringWidth || text.empty())
     return 0;
-
-  auto cached = g_widthCache.find(text);
-  if (cached != g_widthCache.end()) {
-    g_widthLru.splice(g_widthLru.begin(), g_widthLru, cached->second.second);
-    return cached->second.first;
-  }
-
-  jstring jt = ctx.env->NewStringUTF(text.c_str());
-  if (!jt)
-    return 0;
-  int w = ctx.env->CallIntMethod(ctx.fontRenderer, g_jc.m_getStringWidth, jt);
-  if (ctx.env->ExceptionCheck())
-    ctx.env->ExceptionClear();
-  ctx.env->DeleteLocalRef(jt);
-
-  if (g_widthCache.size() >= kWidthCacheMax) {
-    while (g_widthCache.size() >= kWidthCacheMax && !g_widthLru.empty()) {
-      g_widthCache.erase(g_widthLru.back());
-      g_widthLru.pop_back();
-    }
-  }
-  g_widthLru.push_front(text);
-  g_widthCache.emplace(text, std::make_pair(w, g_widthLru.begin()));
-  return w;
+  StringCacheEntry* e = getCachedString(ctx, text);
+  return e ? e->width : 0;
 }
 
 static std::string fmt2(double v) {
@@ -898,21 +942,8 @@ static SkinEntry &upsertEntry(const std::string &name, GLuint id,
   return insIt->second;
 }
 
-GLuint cacheLookupOrFetch(JNIEnv *env, jobject tm, jobject npi,
-                          const std::string &name) {
-  auto it = g_skinTexCache.find(name);
-  ULONGLONG now = GetTickCount64();
-  if (it != g_skinTexCache.end()) {
-    touchLru(it->second);
-    if (it->second.glId != 0 && !it->second.tentative)
-      return it->second.glId;
-    if (now - it->second.lastTry < SKIN_RETRY_MS)
-      return it->second.glId;
-  }
-  bool isDefault = false;
-  GLuint id = resolveSkinTexId(env, tm, npi, &isDefault);
-  upsertEntry(name, id, now, isDefault);
-  return id;
+GLuint cacheLookupOrFetch(JNIEnv *env, jobject tm, jobject npi, const std::string &name) {
+  return 0;
 }
 } // namespace
 
@@ -976,6 +1007,7 @@ static void drawHead(RenderCtx &ctx, jobject tm, jobject npi, GLuint glTexId,
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glColor4f(1, 1, 1, 1);
+  
   glBegin(GL_QUADS);
   glTexCoord2f(0.125f, 0.125f);
   glVertex2f(x, y);
@@ -1093,6 +1125,21 @@ struct Cell {
   uint32_t color;
 };
 
+struct Decorated {
+  double key;
+  std::string name;
+  Hypixel::PlayerStats stats;
+  jobject npi;
+  GLuint glTexId;
+  int ping;
+  std::string lookupName;
+  bool hasRealName;
+};
+
+static std::vector<Decorated> g_cachedRows;
+static std::mutex g_cacheMutex;
+static ULONGLONG g_lastUpdate = 0;
+
 static bool s_rendering = false;
 
 void render(void *hdcPtr) {
@@ -1118,27 +1165,41 @@ void render(void *hdcPtr) {
                          ? ctx.env->GetObjectField(ctx.mc, g_jc.f_fontRenderer)
                          : nullptr;
 
-  static int s_cachedGuiScale = -1;
-  if (s_cachedGuiScale < 0 && ctx.mc && g_jc.f_gameSettings &&
-      g_jc.f_guiScale) {
-    jobject gs = ctx.env->GetObjectField(ctx.mc, g_jc.f_gameSettings);
-    if (gs) {
-      s_cachedGuiScale = ctx.env->GetIntField(gs, g_jc.f_guiScale);
-      ctx.env->DeleteLocalRef(gs);
-    }
+  if (ctx.mc && g_jc.srCls && g_jc.m_srCtor && g_jc.m_srGetScaleFactor) {
+      static int s_cachedFallbackScale = 2;
+      static int s_scaleFrames = 30; // fetch immediately on first frame
+      if (++s_scaleFrames > 30) {
+          jobject srObj = ctx.env->NewObject(g_jc.srCls, g_jc.m_srCtor, ctx.mc);
+          if (srObj) {
+              s_cachedFallbackScale = ctx.env->CallIntMethod(srObj, g_jc.m_srGetScaleFactor);
+              ctx.env->DeleteLocalRef(srObj);
+          }
+          s_scaleFrames = 0;
+      }
+      ctx.guiScale = s_cachedFallbackScale;
   }
-  if (s_cachedGuiScale >= 0)
-    ctx.guiScale = s_cachedGuiScale;
 
   float screenWidth = 0.0f, screenHeight = 0.0f;
-  if (hdcPtr) {
-    HWND hwnd = WindowFromDC((HDC)hdcPtr);
-    RECT rc{};
-    if (hwnd && GetClientRect(hwnd, &rc)) {
-      screenWidth = (float)(rc.right - rc.left);
-      screenHeight = (float)(rc.bottom - rc.top);
+  
+  if (ctx.mc && g_jc.f_displayWidth && g_jc.f_displayHeight) {
+    screenWidth = (float)ctx.env->GetIntField(ctx.mc, g_jc.f_displayWidth);
+    screenHeight = (float)ctx.env->GetIntField(ctx.mc, g_jc.f_displayHeight);
+  }
+
+  if (screenWidth <= 0.0f || screenHeight <= 0.0f) {
+    HWND hwnd = hdcPtr ? WindowFromDC((HDC)hdcPtr) : nullptr;
+    if (!hwnd) {
+      hwnd = FindWindowA("LWJGL", nullptr);
+    }
+    if (hwnd) {
+      RECT rc{};
+      if (GetClientRect(hwnd, &rc)) {
+        screenWidth = (float)(rc.right - rc.left);
+        screenHeight = (float)(rc.bottom - rc.top);
+      }
     }
   }
+
   if (screenWidth <= 0.0f || screenHeight <= 0.0f) {
     GLint viewport[4]{};
     glGetIntegerv(GL_VIEWPORT, viewport);
@@ -1170,18 +1231,19 @@ void render(void *hdcPtr) {
   std::string sortMode = Config::getSortMode();
   bool desc = Config::isTabSortDescending();
 
-  struct Decorated {
-    double key;
-    std::string name;
-    Hypixel::PlayerStats stats;
-    jobject npi;
-    GLuint glTexId;
-    int ping;
-    std::string lookupName;
-    bool hasRealName;
-  };
-  std::vector<Decorated> rows;
-  bool activeMatch = OVson::isInHypixelGame() && !OVson::isInPreGameLobby();
+  std::vector<Decorated> fetchedRows;
+  bool activeMatch = (OVson::isInHypixelGame() || OVson::isInReplay()) && !OVson::isInPreGameLobby();
+  ULONGLONG nowTime = GetTickCount64();
+
+  jobject tmForRows = nullptr;
+  if (g_jc.f_renderEngine) {
+    tmForRows = ctx.env->GetObjectField(ctx.mc, g_jc.f_renderEngine);
+    if (ctx.env->ExceptionCheck())
+      ctx.env->ExceptionClear();
+  }
+
+  if (nowTime - g_lastUpdate >= 250) {
+      g_lastUpdate = nowTime;
 
   jobject scoreboard = nullptr;
   jobject healthObj = nullptr;
@@ -1195,26 +1257,37 @@ void render(void *hdcPtr) {
     ctx.env->DeleteLocalRef(world);
   }
 
-  std::vector<std::pair<std::string, const Hypixel::PlayerStats *>>
-      fuzzyCandidates;
+  std::unordered_map<std::string, Hypixel::PlayerStats> statsSnap;
   {
     std::lock_guard<std::mutex> lock(OVson::g_statsMutex);
-    if (!OVson::g_playerStatsMap.empty()) {
-      fuzzyCandidates.reserve(OVson::g_playerStatsMap.size());
-      for (auto const &[mapKey, mapStats] : OVson::g_playerStatsMap) {
-        if (mapKey.length() >= 3) {
-          fuzzyCandidates.push_back({mapKey, &mapStats});
-        }
+    statsSnap = OVson::g_playerStatsMap;
+  }
+  std::unordered_map<std::string, Hypixel::PlayerStats> pendingSnap;
+  {
+    std::lock_guard<std::mutex> lock(OVson::g_pendingStatsMutex);
+    pendingSnap = OVson::g_pendingStatsMap;
+  }
+  std::unordered_map<std::string, std::string> nickSnap;
+  {
+    std::lock_guard<std::mutex> lock(OVson::g_nickMapMutex);
+    nickSnap = OVson::g_nickToRealMap;
+  }
+
+  struct WBEntry { std::string k1, k2; int val; };
+  std::vector<WBEntry> healthWrites;
+  std::vector<WBEntry> pingWrites;
+
+  std::vector<std::pair<std::string, const Hypixel::PlayerStats *>>
+      fuzzyCandidates;
+  if (!statsSnap.empty()) {
+    fuzzyCandidates.reserve(statsSnap.size());
+    for (auto const &[mapKey, mapStats] : statsSnap) {
+      if (mapKey.length() >= 3) {
+        fuzzyCandidates.push_back({mapKey, &mapStats});
       }
     }
   }
 
-  jobject tmForRows = nullptr;
-  if (g_jc.f_renderEngine) {
-    tmForRows = ctx.env->GetObjectField(ctx.mc, g_jc.f_renderEngine);
-    if (ctx.env->ExceptionCheck())
-      ctx.env->ExceptionClear();
-  }
 
   if (g_jc.m_getNet) {
     jobject nh = ctx.env->CallObjectMethod(ctx.mc, g_jc.m_getNet);
@@ -1252,6 +1325,8 @@ void render(void *hdcPtr) {
                 }
                 if (!g_jc.m_next)
                   break;
+                LocalFrameGuard playerFrame(ctx.env, 32);
+                if (!playerFrame.ok) break;
                 jobject npi = ctx.env->CallObjectMethod(iter, g_jc.m_next);
                 if (ctx.env->ExceptionCheck()) {
                   ctx.env->ExceptionClear();
@@ -1331,19 +1406,18 @@ void render(void *hdcPtr) {
 
                       bool foundInMap = false;
                       {
-                        std::lock_guard<std::mutex> lock(OVson::g_statsMutex);
-                        auto it = OVson::g_playerStatsMap.find(cleanName);
-                        if (it == OVson::g_playerStatsMap.end())
-                          it = OVson::g_playerStatsMap.find(name);
-                        if (it == OVson::g_playerStatsMap.end()) {
+                        auto it = statsSnap.find(cleanName);
+                        if (it == statsSnap.end())
+                          it = statsSnap.find(name);
+                        if (it == statsSnap.end()) {
                           std::string lowerName = name;
                           for (auto &c : lowerName) {
                             if (c >= 'A' && c <= 'Z')
                               c += 32;
                           }
-                          it = OVson::g_playerStatsMap.find(lowerName);
+                          it = statsSnap.find(lowerName);
                         }
-                        if (it != OVson::g_playerStatsMap.end()) {
+                        if (it != statsSnap.end()) {
                           foundInMap = true;
                         }
                       }
@@ -1369,11 +1443,10 @@ void render(void *hdcPtr) {
                       std::string lookupClean = cleanName;
                       bool hasRealName = false;
                       {
-                          std::lock_guard<std::mutex> nLock(OVson::g_nickMapMutex);
-                          auto nit = OVson::g_nickToRealMap.find(name);
-                          if (nit != OVson::g_nickToRealMap.end()) {
+                          auto nit = nickSnap.find(name);
+                          if (nit != nickSnap.end()) {
                               lookupName = nit->second;
-                              lookupClean = lookupName; // simplified
+                              lookupClean = lookupName;
                               hasRealName = true;
                           }
                       }
@@ -1381,23 +1454,20 @@ void render(void *hdcPtr) {
                       Hypixel::PlayerStats stats;
                       bool foundInMapStat = false;
                       {
-                        std::lock_guard<std::mutex> lock(OVson::g_statsMutex);
-                        auto it = OVson::g_playerStatsMap.find(lookupName);
-                        if (it == OVson::g_playerStatsMap.end())
-                          it = OVson::g_playerStatsMap.find(lookupClean);
-                        if (it != OVson::g_playerStatsMap.end()) {
+                        auto it = statsSnap.find(lookupName);
+                        if (it == statsSnap.end())
+                          it = statsSnap.find(lookupClean);
+                        if (it != statsSnap.end()) {
                           stats = it->second;
                           foundInMapStat = true;
                         }
                       }
 
                       if (!foundInMapStat) {
-                        std::lock_guard<std::mutex> lock(
-                            OVson::g_pendingStatsMutex);
-                        auto pit = OVson::g_pendingStatsMap.find(lookupName);
-                        if (pit == OVson::g_pendingStatsMap.end())
-                          pit = OVson::g_pendingStatsMap.find(lookupClean);
-                        if (pit != OVson::g_pendingStatsMap.end()) {
+                        auto pit = pendingSnap.find(lookupName);
+                        if (pit == pendingSnap.end())
+                          pit = pendingSnap.find(lookupClean);
+                        if (pit != pendingSnap.end()) {
                           stats = pit->second;
                           foundInMapStat = true;
                         }
@@ -1408,11 +1478,10 @@ void render(void *hdcPtr) {
                       }
 
                       if (hasRealName) {
-                        std::lock_guard<std::mutex> lock(OVson::g_statsMutex);
-                        auto it = OVson::g_playerStatsMap.find(name);
-                        if (it == OVson::g_playerStatsMap.end())
-                          it = OVson::g_playerStatsMap.find(cleanName);
-                        if (it != OVson::g_playerStatsMap.end()) {
+                        auto it = statsSnap.find(name);
+                        if (it == statsSnap.end())
+                          it = statsSnap.find(cleanName);
+                        if (it != statsSnap.end()) {
                           if (!it->second.teamColor.empty()) {
                             stats.teamColor = it->second.teamColor;
                           }
@@ -1439,23 +1508,9 @@ void render(void *hdcPtr) {
                               if (ctx.env->ExceptionCheck())
                                 ctx.env->ExceptionClear();
 
-                              std::lock_guard<std::mutex> lock(
-                                  OVson::g_statsMutex);
-                              auto mit = OVson::g_playerStatsMap.find(lookupClean);
-                              if (mit == OVson::g_playerStatsMap.end())
-                                mit = OVson::g_playerStatsMap.find(lookupName);
-                              if (mit != OVson::g_playerStatsMap.end()) {
-                                mit->second.inGameHealth = stats.inGameHealth;
-                                mit->second.healthKnown = true;
-                              }
+                              healthWrites.push_back({lookupClean, lookupName, stats.inGameHealth});
                               if (hasRealName) {
-                                auto fit = OVson::g_playerStatsMap.find(cleanName);
-                                if (fit == OVson::g_playerStatsMap.end())
-                                  fit = OVson::g_playerStatsMap.find(name);
-                                if (fit != OVson::g_playerStatsMap.end()) {
-                                  fit->second.inGameHealth = stats.inGameHealth;
-                                  fit->second.healthKnown = true;
-                                }
+                                healthWrites.push_back({cleanName, name, stats.inGameHealth});
                               }
                             }
                             ctx.env->DeleteLocalRef(score);
@@ -1464,7 +1519,16 @@ void render(void *hdcPtr) {
                         }
                       }
 
-                      if (!(activeMatch && stats.inGameHealth <= 0 && !stats.isFetched)) {
+                      bool shouldHide = false;
+                      if (activeMatch) {
+                          bool isNickedPlayer = (stats.isNicked || hasRealName);
+                          bool hasRealFetchedStats = (foundInMapStat && stats.isFetched && !stats.isNicked);
+                          if (stats.inGameHealth <= 0 && (isNickedPlayer || !hasRealFetchedStats)) {
+                              shouldHide = true;
+                          }
+                      }
+                      
+                      if (!shouldHide) {
                         GLuint glTex =
                             cacheLookupOrFetch(ctx.env, tmForRows, npi, name);
 
@@ -1490,29 +1554,20 @@ void render(void *hdcPtr) {
                             finalDisplayName = lookupName + " (" + name + ")";
                         }
 
-                        rows.push_back({sortKeyFor(stats, sortMode), finalDisplayName,
-                                        stats, ctx.env->NewLocalRef(npi), glTex,
+                        fetchedRows.push_back({sortKeyFor(stats, sortMode), finalDisplayName,
+                                        stats, ctx.env->NewGlobalRef(npi), glTex,
                                         ping, lookupName, hasRealName});
 
                         {
-                          std::lock_guard<std::mutex> lock(OVson::g_statsMutex);
-                          auto it = OVson::g_playerStatsMap.find(name);
-                          if (it != OVson::g_playerStatsMap.end()) {
-                            it->second.lastPing = ping;
-                          } else {
-                            std::string cleanName;
-                            for (char c : name) {
-                              if (c >= 'A' && c <= 'Z')
-                                cleanName += (char)(c + 32);
-                              else if ((c >= 'a' && c <= 'z') ||
-                                       (c >= '0' && c <= '9') || c == '_')
-                                cleanName += c;
-                            }
-                            it = OVson::g_playerStatsMap.find(cleanName);
-                            if (it != OVson::g_playerStatsMap.end()) {
-                              it->second.lastPing = ping;
-                            }
+                          std::string pingClean;
+                          for (char c : name) {
+                            if (c >= 'A' && c <= 'Z')
+                              pingClean += (char)(c + 32);
+                            else if ((c >= 'a' && c <= 'z') ||
+                                     (c >= '0' && c <= '9') || c == '_')
+                              pingClean += c;
                           }
+                          pingWrites.push_back({name, pingClean, ping});
                         }
                       }
                       ctx.env->DeleteLocalRef(jName);
@@ -1554,6 +1609,42 @@ void render(void *hdcPtr) {
     ctx.env->DeleteLocalRef(healthObj);
   if (scoreboard)
     ctx.env->DeleteLocalRef(scoreboard);
+
+  if (!healthWrites.empty() || !pingWrites.empty()) {
+    std::lock_guard<std::mutex> lock(OVson::g_statsMutex);
+    for (auto& hw : healthWrites) {
+      auto it = OVson::g_playerStatsMap.find(hw.k1);
+      if (it == OVson::g_playerStatsMap.end())
+        it = OVson::g_playerStatsMap.find(hw.k2);
+      if (it != OVson::g_playerStatsMap.end()) {
+        it->second.inGameHealth = hw.val;
+        it->second.healthKnown = true;
+      }
+    }
+    for (auto& pw : pingWrites) {
+      auto it = OVson::g_playerStatsMap.find(pw.k1);
+      if (it == OVson::g_playerStatsMap.end())
+        it = OVson::g_playerStatsMap.find(pw.k2);
+      if (it != OVson::g_playerStatsMap.end()) {
+        it->second.lastPing = pw.val;
+      }
+    }
+  }
+
+  {
+      std::lock_guard<std::mutex> cacheLock(g_cacheMutex);
+      for (auto& row : g_cachedRows) {
+          if (row.npi) ctx.env->DeleteGlobalRef(row.npi);
+      }
+      g_cachedRows = std::move(fetchedRows);
+  }
+  }
+
+  std::vector<Decorated> rows;
+  {
+      std::lock_guard<std::mutex> cacheLock(g_cacheMutex);
+      rows = g_cachedRows;
+  }
 
   if (rows.empty() && (Config::isGlobalDebugEnabled() || g_resizeMode)) {
     auto mkDemo = [](const std::string &n, int star, int fk, int fd, int k,
@@ -1763,7 +1854,7 @@ void render(void *hdcPtr) {
   std::vector<std::string> footerLines;
   {
     std::lock_guard<std::mutex> lock(OVson::g_footerMutex);
-    if (!OVson::g_tabFooterText.empty()) {
+    if (!OVson::g_tabFooterText.empty() && !OVson::isInReplay()) {
       std::string raw = OVson::g_tabFooterText;
       std::vector<std::pair<std::string, std::string>> keywords = {
           {"Final Kills", "Final Kills"},
@@ -1831,16 +1922,9 @@ void render(void *hdcPtr) {
   if (!footerLines.empty())
     boxHeight += std::floor((footerLines.size() * rowHeight) + 6.0f);
 
-  float startX = Config::getBetterTabX();
-  float startY = Config::getBetterTabY();
   float scale = Config::getBetterTabScale();
-  
-  if (startX < 0.0f) {
-      startX = std::floor((scaledWidth - (boxWidth * scale)) / 2.0f);
-  }
-  if (startY < 0.0f) {
-      startY = 15.0f;
-  }
+  float startX = std::floor((scaledWidth - (boxWidth * scale)) / 2.0f);
+  float startY = 15.0f;
 
   g_currentBoxWidth = boxWidth;
   g_currentBoxHeight = boxHeight;

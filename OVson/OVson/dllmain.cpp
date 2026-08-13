@@ -23,6 +23,7 @@
 #include "Chat/ChatAPI_Bridge.h"
 #include "JavaHook/JavaHook.h"
 #include "Services/DiscordManager.h"
+#include "Logic/PacketHook.h"
 #include "Utils/Logger.h"
 #include <ShlObj.h>
 #include "Utils/ReplaySpammer.h"
@@ -81,8 +82,9 @@ void init(void *instance) {
     PluginLoader::initialize();
     JavaHook::initialize();
     
-    Logger::info("ChatHook disabled (safe mode)");
-
+    if (!ChatHook::install()) {
+      Logger::error("ChatHook failed to install!");
+    }
     {
       const char *S = "\xC2\xA7";
       std::string banner = std::string(S) + "0[" + S + "r" + S + "cO" + S +
@@ -222,6 +224,8 @@ void init(void *instance) {
   try {
     Logger::info("Shutting down ChatInterceptor...");
     OVson::shutdown();
+    ChatHook::uninstall();
+    PacketHook::uninstall();
     Logger::info("ChatInterceptor shut down.");
   } catch (...) {
     Logger::error("CRASH: Exception in OVson::shutdown");
@@ -311,6 +315,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call,
     }
     break;
   case DLL_PROCESS_DETACH:
+    Config::saveNow();
     if (lpReserved == nullptr) {
       if (g_sharedFlag) {
         InterlockedExchange((LONG *)g_sharedFlag, 0);

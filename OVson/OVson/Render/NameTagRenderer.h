@@ -21,6 +21,8 @@ private:
 
   struct JNICache {
     bool initialized = false;
+    void *mcClsGlobal = nullptr;
+    void *ariClsGlobal = nullptr;
     void *ep_classGlobal = nullptr;
     void *worldListBlacklist[16] = {};
     int worldListBlacklistCount = 0;

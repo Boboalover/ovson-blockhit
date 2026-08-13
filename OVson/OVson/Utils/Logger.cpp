@@ -11,12 +11,39 @@
 #pragma comment(lib, "Shell32.lib")
 
 static HANDLE g_logHandle = INVALID_HANDLE_VALUE;
+static HANDLE g_tagLogHandle = INVALID_HANDLE_VALUE;
+
+static HANDLE g_hoverLogHandle = INVALID_HANDLE_VALUE;
+
+static void rawWriteHandle(HANDLE handle, const char *msg, int len) {
+  if (handle == INVALID_HANDLE_VALUE || len <= 0) return;
+  DWORD written = 0;
+  WriteFile(handle, msg, (DWORD)len, &written, nullptr);
+  FlushFileBuffers(handle);
+}
 
 static void rawWrite(const char *msg, int len) {
-  if (g_logHandle == INVALID_HANDLE_VALUE || len <= 0) return;
-  DWORD written = 0;
-  WriteFile(g_logHandle, msg, (DWORD)len, &written, nullptr);
-  FlushFileBuffers(g_logHandle);
+  rawWriteHandle(g_logHandle, msg, len);
+}
+
+static void writeCategoryLog(HANDLE handle, const char *categoryTag, const char *fmt, va_list args) {
+  char buffer[2048];
+  vsnprintf(buffer, sizeof(buffer), fmt, args);
+
+  SYSTEMTIME st;
+  GetLocalTime(&st);
+
+  char finalMsg[2560];
+  int n = sprintf_s(finalMsg, "[%04d-%02d-%02d %02d:%02d:%02d.%03d] [%s] %s\n",
+                    st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, categoryTag, buffer);
+
+  OutputDebugStringA(finalMsg);
+
+  if (n > 0) {
+    if (handle != INVALID_HANDLE_VALUE)
+      rawWriteHandle(handle, finalMsg, n);
+    rawWriteHandle(g_logHandle, finalMsg, n);
+  }
 }
 
 static void vwrite(const char *level, const char *fmt, va_list args) {
@@ -53,6 +80,30 @@ bool Logger::initialize(const char *logFileName) {
                                 | FILE_SHARE_DELETE,
                               nullptr, CREATE_ALWAYS,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
+
+    wchar_t tagLogPath[MAX_PATH];
+    swprintf_s(tagLogPath, L"%s\\tag_debug.log", logDir);
+    g_tagLogHandle = CreateFileW(tagLogPath, GENERIC_WRITE,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE
+                                   | FILE_SHARE_DELETE,
+                                 nullptr, OPEN_ALWAYS,
+                                 FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (g_tagLogHandle != INVALID_HANDLE_VALUE) {
+      SetFilePointer(g_tagLogHandle, 0, nullptr, FILE_END);
+    }
+
+
+
+    wchar_t hoverLogPath[MAX_PATH];
+    swprintf_s(hoverLogPath, L"%s\\hover_debug.log", logDir);
+    g_hoverLogHandle = CreateFileW(hoverLogPath, GENERIC_WRITE,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE
+                                     | FILE_SHARE_DELETE,
+                                   nullptr, OPEN_ALWAYS,
+                                   FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (g_hoverLogHandle != INVALID_HANDLE_VALUE) {
+      SetFilePointer(g_hoverLogHandle, 0, nullptr, FILE_END);
+    }
   }
 
   if (g_logHandle == INVALID_HANDLE_VALUE && logFileName) {
@@ -81,6 +132,19 @@ void Logger::error(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   vwrite("ERROR", fmt, args);
+  va_end(args);
+}
+
+void Logger::tagDebug(const char *fmt, ...) {
+  // Disabled per user request
+}
+
+
+
+void Logger::hoverDebug(const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  writeCategoryLog(g_hoverLogHandle, "HOVER_DEBUG", fmt, args);
   va_end(args);
 }
 
@@ -130,5 +194,14 @@ void Logger::shutdown() {
   if (g_logHandle != INVALID_HANDLE_VALUE) {
     CloseHandle(g_logHandle);
     g_logHandle = INVALID_HANDLE_VALUE;
+  }
+  if (g_tagLogHandle != INVALID_HANDLE_VALUE) {
+    CloseHandle(g_tagLogHandle);
+    g_tagLogHandle = INVALID_HANDLE_VALUE;
+  }
+
+  if (g_hoverLogHandle != INVALID_HANDLE_VALUE) {
+    CloseHandle(g_hoverLogHandle);
+    g_hoverLogHandle = INVALID_HANDLE_VALUE;
   }
 }

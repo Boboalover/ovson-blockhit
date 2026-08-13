@@ -149,9 +149,14 @@ void NameTagRenderer::initIds() {
   };
 
   try {
-    jclass mcCls = findCls("net.minecraft.client.Minecraft",
+    jclass mcClsLocal = findCls("net.minecraft.client.Minecraft",
                            {"ave", "avc", "avd"});
-    if (!mcCls) { ntLog("initIds: FAIL mcCls"); return; }
+    if (!mcClsLocal) { ntLog("initIds: FAIL mcCls"); return; }
+    if (!m_ids.mcClsGlobal) {
+        m_ids.mcClsGlobal = (void *)env->NewGlobalRef(mcClsLocal);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+    jclass mcCls = (jclass)m_ids.mcClsGlobal;
     m_ids.mc_theMc = (void *)lc->GetStaticFieldID(
         mcCls, "theMinecraft", "Lnet/minecraft/client/Minecraft;",
         "field_71432_P", "S", "Lave;");
@@ -327,9 +332,14 @@ void NameTagRenderer::initIds() {
       if (env->ExceptionCheck()) env->ExceptionClear();
     }
 
-    jclass ariCls = findCls("net.minecraft.client.renderer.ActiveRenderInfo",
+    jclass ariClsLocal = findCls("net.minecraft.client.renderer.ActiveRenderInfo",
                             {"bex", "bey", "bez"});
-    if (ariCls) {
+    if (ariClsLocal) {
+      if (!m_ids.ariClsGlobal) {
+          m_ids.ariClsGlobal = (void *)env->NewGlobalRef(ariClsLocal);
+          if (env->ExceptionCheck()) env->ExceptionClear();
+      }
+      jclass ariCls = (jclass)m_ids.ariClsGlobal;
       m_ids.ari_MODELVIEW = (void *)lc->GetStaticFieldID(
           ariCls, "MODELVIEW", "Ljava/nio/FloatBuffer;", "field_178812_b", "b");
       m_ids.ari_PROJECTION = (void *)lc->GetStaticFieldID(
@@ -341,7 +351,6 @@ void NameTagRenderer::initIds() {
       m_ids.ari_PROJECTION = nullptr;
       m_ids.ari_VIEWPORT = nullptr;
     }
-
     jclass fontCls = findCls("net.minecraft.client.gui.FontRenderer",
                              {"avn", "avo", "avp"});
     if (!fontCls) { ntLog("initIds: FAIL fontCls"); return; }
@@ -431,13 +440,7 @@ void NameTagRenderer::renderInner(void *hdcPtr, double partialTicksManual) {
   const char *step = "(none)";
   try {
     if (logThisPass) ntLog("  gate: entering camera-state try");
-    jclass mcCls = lc->GetClass("net.minecraft.client.Minecraft");
-    if (!mcCls) mcCls = env->FindClass("ave");
-    if (env->ExceptionCheck()) env->ExceptionClear();
-    if (!mcCls) mcCls = env->FindClass("avc");
-    if (env->ExceptionCheck()) env->ExceptionClear();
-    if (!mcCls) mcCls = env->FindClass("avd");
-    if (env->ExceptionCheck()) env->ExceptionClear();
+    jclass mcCls = (jclass)m_ids.mcClsGlobal;
     if (!mcCls) {
       if (logThisPass) ntLog("  gate: mcCls NULL (Minecraft class)");
       return;
@@ -601,12 +604,8 @@ void NameTagRenderer::renderInner(void *hdcPtr, double partialTicksManual) {
   int viewport[4];
 
   if (m_ids.ari_MODELVIEW && m_ids.ari_PROJECTION && m_ids.ari_VIEWPORT) {
-    jclass ariCls =
-        lc->GetClass("net.minecraft.client.renderer.ActiveRenderInfo");
-    if (!ariCls) ariCls = env->FindClass("bex");
-    if (env->ExceptionCheck()) env->ExceptionClear();
-    if (!ariCls) ariCls = env->FindClass("bey");
-    if (env->ExceptionCheck()) env->ExceptionClear();
+    jclass ariCls = (jclass)m_ids.ariClsGlobal;
+
     if (ariCls) {
       jobject modelviewBuf = env->GetStaticObjectField(ariCls, (jfieldID)m_ids.ari_MODELVIEW);
       jobject projectionBuf = env->GetStaticObjectField(ariCls, (jfieldID)m_ids.ari_PROJECTION);

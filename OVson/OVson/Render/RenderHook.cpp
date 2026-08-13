@@ -3,6 +3,7 @@
 #include "../Java.h"
 #include "../SDK/McAccess.h"
 #include "../Logic/BedDefense/BedDefenseManager.h"
+#include "../Logic/PacketHook.h"
 #include "../Logic/StatsTracker.h"
 #include "../Utils/Anticheat/AcInternal.h"
 #include "../Utils/Anticheat/Anticheat.h"
@@ -62,17 +63,33 @@ static void suppressVanillaTab() {
   if (env->ExceptionCheck()) env->ExceptionClear();
 }
 
+static jfieldID g_tabKeyCodeFid = nullptr;
+
 static int getPlayerListVK() {
   static bool s_logged = false;
   static ULONGLONG s_last = 0;
+  
+  JNIEnv *env = lc ? lc->getEnv() : nullptr;
+  if (!env) return g_tabVK;
+
+  if (g_tabKbGlobal && g_tabKeyCodeFid) {
+    jint lwjglCode = env->GetIntField(g_tabKbGlobal, g_tabKeyCodeFid);
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    else if (lwjglCode > 0 && lwjglCode < 256) {
+      UINT mapped = MapVirtualKeyA((UINT)lwjglCode, MAPVK_VSC_TO_VK);
+      if (mapped != 0) {
+        g_tabScan = lwjglCode;
+        g_tabVK = (int)mapped;
+        return g_tabVK;
+      }
+    }
+  }
+
   ULONGLONG now = GetTickCount64();
   if (now - s_last < 3000) return g_tabVK;
   s_last = now;
 
   #define TABLOG(...) do { if (!s_logged) Logger::info(__VA_ARGS__); } while(0)
-
-  JNIEnv *env = lc ? lc->getEnv() : nullptr;
-  if (!env) { TABLOG("[TabKey] env null -> fallback VK=0x%X", g_tabVK); return g_tabVK; }
 
   jclass mcCls = lc->GetClass("net.minecraft.client.Minecraft");
   if (!mcCls) { TABLOG("[TabKey] Minecraft class NOT FOUND -> fallback"); return g_tabVK; }
@@ -154,6 +171,7 @@ static int getPlayerListVK() {
   jclass kbCls = env->GetObjectClass(kb);
   jint lwjglCode = 0;
   bool gotCode = false;
+  jfieldID foundKeyCodeFid = nullptr;
   {
     jint fc2 = 0; jfieldID *pf2 = nullptr;
     if (lc->jvmti && lc->jvmti->GetClassFields(kbCls, &fc2, &pf2) == JVMTI_ERROR_NONE) {
@@ -168,7 +186,7 @@ static int getPlayerListVK() {
           if (env->ExceptionCheck()) env->ExceptionClear();
           TABLOG("[TabKey]   KeyBinding int#%d (%s) = %d",
                        intSeen, fn ? fn : "?", (int)v);
-          if (intSeen == 2) { lwjglCode = v; gotCode = true; }
+          if (intSeen == 2) { lwjglCode = v; gotCode = true; foundKeyCodeFid = pf2[fi]; }
         }
         if (fn) lc->jvmti->Deallocate((unsigned char *)fn);
         if (fs) lc->jvmti->Deallocate((unsigned char *)fs);
@@ -186,6 +204,7 @@ static int getPlayerListVK() {
     if (g_tabKbGlobal) env->DeleteGlobalRef(g_tabKbGlobal);
     g_tabKbGlobal = env->NewGlobalRef(kb);
     g_tabPressedFid = f_pressed;
+    g_tabKeyCodeFid = foundKeyCodeFid;
   }
   env->DeleteLocalRef(kbCls);
   env->DeleteLocalRef(kb);
@@ -260,6 +279,19 @@ static MH_StatusToString_t pMH_StatusToString = nullptr;
 
 typedef BOOL(WINAPI *wglSwapBuffers_t)(HDC hdc);
 static wglSwapBuffers_t originalSwapBuffers = nullptr;
+
+typedef BOOL(WINAPI* SetCursorPos_t)(int, int);
+static SetCursorPos_t originalSetCursorPos = nullptr;
+
+BOOL WINAPI hookedSetCursorPos(int X, int Y) {
+  if (Config::isRawMouseFixEnabled()) {
+    POINT pt;
+    if (GetCursorPos(&pt) && pt.x == X && pt.y == Y) {
+      return TRUE; // Bypass redundant SetCursorPos calls
+    }
+  }
+  return originalSetCursorPos(X, Y);
+}
 
 static void writeDebugLog(const char *msg) {
   (void)msg;
@@ -704,7 +736,7 @@ static void renderOverlayWorkBody(HDC hdc) {
   bool physicalTab = false;
   runSubsystem("BetterTab/state", [&]() {
     wantBetterTab = Config::isBetterTabModeEnabled() &&
-                    OVson::isInHypixelGame() &&
+                    (OVson::isInHypixelGame() || OVson::isInReplay()) &&
                     !OVson::isInPreGameLobby() && !OVson::isChatOpen();
     HWND hwnd = WindowFromDC((HDC)hdc);
     int tabVK = getPlayerListVK();
@@ -805,6 +837,7 @@ BOOL WINAPI hookedSwapBuffers(HDC hdc) {
   }
 
   SafeGuard::run("hookedSwapBuffers", [hdc]() { renderOverlayWorkBody(hdc); });
+  SafeGuard::run("PacketHook", []() { PacketHook::update(); });
 
   if (framePushed) {
     env->PopLocalFrame(nullptr);
@@ -867,6 +900,18 @@ bool RenderHook::install() {
     return false;
   }
   writeDebugLog("wglSwapBuffers hooked successfully!");
+  
+  HMODULE hUser32 = GetModuleHandleA("user32.dll");
+  if (hUser32) {
+    FARPROC pSetCursorPos = GetProcAddress(hUser32, "SetCursorPos");
+    if (pSetCursorPos) {
+      if (pMH_CreateHook(pSetCursorPos, &hookedSetCursorPos, reinterpret_cast<LPVOID*>(&originalSetCursorPos)) == MH_OK) {
+        pMH_EnableHook(pSetCursorPos);
+        writeDebugLog("SetCursorPos hooked successfully!");
+      }
+    }
+  }
+  
   g_hookInstalled = true;
 
   Watchdog::start();

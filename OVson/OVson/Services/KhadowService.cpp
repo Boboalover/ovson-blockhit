@@ -124,7 +124,10 @@ bool doFetch(const std::string &username, AnticheatInfo &out) {
 
 std::optional<AnticheatInfo> getPlayerAnticheat(const std::string &username,
                                                 bool wait) {
-  if (!isEnabled()) return std::nullopt;
+  if (!isEnabled()) {
+    Logger::tagDebug("[Khadow] Fetch skipped for '%s': Service disabled or active tag service is '%s'", username.c_str(), Config::getActiveTagService().c_str());
+    return std::nullopt;
+  }
 
   auto now = std::chrono::steady_clock::now();
 
@@ -136,22 +139,31 @@ std::optional<AnticheatInfo> getPlayerAnticheat(const std::string &username,
       auto age = std::chrono::duration_cast<std::chrono::seconds>(
                      now - it->second.timestamp).count();
       if (age < kCacheExpirySec) {
+        Logger::tagDebug("[Khadow] Cache hit for '%s' (age %llds, urchin: %d, seraph: %d)", username.c_str(), (long long)age, it->second.data.urchinBlacklisted ? 1 : 0, it->second.data.seraphBlacklisted ? 1 : 0);
         return it->second.data;
       }
     }
   }
 
-  if (!wait && OVson::isInPreGameLobby()) return std::nullopt;
+  if (!wait && OVson::isInPreGameLobby()) {
+    Logger::tagDebug("[Khadow] Async fetch skipped for '%s': In pre-game lobby", username.c_str());
+    return std::nullopt;
+  }
 
   if (wait) {
+    Logger::tagDebug("[Khadow] Sync POST request for '%s'", username.c_str());
     AnticheatInfo info;
-    if (!doFetch(username, info)) return std::nullopt;
-    {
+    bool ok = doFetch(username, info);
+    if (ok) {
       std::lock_guard<std::mutex> lock(g_cacheMutex);
       pruneLocked();
       g_cache[username] = {info, std::chrono::steady_clock::now()};
+      Logger::tagDebug("[Khadow] Sync Success for '%s' (urchin: %d, type: '%s', seraph: %d, type: '%s')", username.c_str(), info.urchinBlacklisted ? 1 : 0, info.urchinType.c_str(), info.seraphBlacklisted ? 1 : 0, info.seraphType.c_str());
+      return info;
+    } else {
+      Logger::tagDebug("[Khadow] Sync Failed for '%s'", username.c_str());
     }
-    return info;
+    return std::nullopt;
   }
 
   {
@@ -160,7 +172,10 @@ std::optional<AnticheatInfo> getPlayerAnticheat(const std::string &username,
     if (it != g_pending.end()) {
       auto age = std::chrono::duration_cast<std::chrono::seconds>(
                      now - it->second).count();
-      if (age < kPendingThrottleSec) return std::nullopt;
+      if (age < kPendingThrottleSec) {
+        Logger::tagDebug("[Khadow] Async fetch throttled for '%s': Pending fetch age %llds", username.c_str(), (long long)age);
+        return std::nullopt;
+      }
     }
     g_pending[username] = now;
   }
@@ -170,6 +185,7 @@ std::optional<AnticheatInfo> getPlayerAnticheat(const std::string &username,
     ThreadTracker::decrement();
     std::lock_guard<std::mutex> lock(g_pendingMutex);
     g_pending.erase(username);
+    Logger::tagDebug("[Khadow] Async thread skipped for '%s': Too many active threads (%d)", username.c_str(), ThreadTracker::g_activeThreads.load());
     return std::nullopt;
   }
 
@@ -177,9 +193,15 @@ std::optional<AnticheatInfo> getPlayerAnticheat(const std::string &username,
     SafeGuard::installSehTranslator();
     SafeGuard::run("Khadow::worker", [&]() {
       if (ThreadTracker::shouldStop()) return;
+      Logger::tagDebug("[Khadow] Async worker started for '%s'", username.c_str());
       AnticheatInfo info;
       bool ok = doFetch(username, info);
       if (ThreadTracker::shouldStop()) return;
+      if (ok) {
+        Logger::tagDebug("[Khadow] Async Success for '%s' (urchin: %d, type: '%s', seraph: %d, type: '%s')", username.c_str(), info.urchinBlacklisted ? 1 : 0, info.urchinType.c_str(), info.seraphBlacklisted ? 1 : 0, info.seraphType.c_str());
+      } else {
+        Logger::tagDebug("[Khadow] Async Failed for '%s'", username.c_str());
+      }
       {
         std::lock_guard<std::mutex> lock(g_cacheMutex);
         pruneLocked();

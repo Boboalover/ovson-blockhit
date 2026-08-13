@@ -170,6 +170,7 @@ AbyssService::getPlayerStats(const std::string &uuid) {
   findJsonString(playerJson, "rank", ps.rank);
   findJsonString(playerJson, "monthlyPackageRank", ps.monthlyPackageRank);
   findJsonString(playerJson, "newPackageRank", ps.newPackageRank);
+  findJsonString(playerJson, "packageRank", ps.packageRank);
   findJsonString(playerJson, "rankPlusColor", ps.rankPlusColor);
 
   int networkExp = 0;

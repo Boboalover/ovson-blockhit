@@ -34,6 +34,7 @@ struct PlayerStats {
   std::string rank;
   std::string monthlyPackageRank;
   std::string newPackageRank;
+  std::string packageRank;
   std::string rankPlusColor;
 };
 

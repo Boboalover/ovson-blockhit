@@ -10,6 +10,8 @@
 #include "../SafeGuard.h"
 #include "AcInternal.h"
 #include "Anticheat.h"
+#include "../../Services/KhadowService.h"
+#include "../../Logic/StatsTracker.internal.h"
 #include <Windows.h>
 #include <algorithm>
 #include <atomic>
@@ -1191,31 +1193,59 @@ void flag(PlayerData &p, Check *check, const std::string &info, double vl) {
          "8[\xC2\xA7"
          "cAC\xC2\xA7"
          "8] ";
-  msg += "\xC2\xA7"
-         "7" +
-         p.name + " ";
-  msg += "\xC2\xA7"
-         "ffailed \xC2\xA7"
+  
+  std::string teamColor = "\xC2\xA7"
+                          "7";
+  
+  {
+    std::lock_guard<std::mutex> lock(OVson::g_statsMutex);
+    auto itTC = OVson::g_playerTeamColor.find(p.name);
+    if (itTC != OVson::g_playerTeamColor.end() && !itTC->second.empty()) {
+      teamColor = OVson::mcColorForTeam(itTC->second);
+    }
+  }
+
+  msg += teamColor + p.name + " ";
+  
+  msg += " \xC2\xA7"
+         "c\xC2\xA7"
+         "lis flagging for \xC2\xA7"
          "c" +
          std::string(check->name());
-  if (!info.empty()) {
-    msg += " \xC2\xA7"
-           "7(" +
-           info + ")";
-  }
-  msg += " \xC2\xA7"
-         "c[VL: " +
-         std::string(vlBuf) + "]";
 
   if (OVson::isInHypixelGame()) {
-    msg += " \xC2\xA7"
-           "8[\xC2\xA7"
-           "c/wdr " +
-           p.name +
-           "\xC2\xA7"
-           "8]";
+    std::string cleanMsg = teamColor + p.name + " \xC2\xA7"
+                           "c\xC2\xA7"
+                           "lis flagging for \xC2\xA7"
+                           "c" +
+                           std::string(check->name());
+                           
+    auto escapeJsonLocal = [](const std::string &str) -> std::string {
+      std::string out;
+      for (char c : str) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\b') out += "\\b";
+        else if (c == '\f') out += "\\f";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else out += c;
+      }
+      return out;
+    };
+    
+    std::string json = "{\"text\":\"\",\"extra\":[";
+    json += "{\"text\":\"" + escapeJsonLocal(ChatSDK::formatPrefix() + "\xC2\xA7" + "8[\xC2\xA7" + "cAC\xC2\xA7" + "8] " + cleanMsg) + "\"}";
+    json += ",{\"text\":\" \\u00a78[\\u00a7cWDR\\u00a78]\",\"clickEvent\":{\"action\":\"run_command\",\"value\":\"/wdr " + p.name + "\"},\"hoverEvent\":{\"action\":\"show_text\",\"value\":\"Click to report " + p.name + "\"}}";
+    json += "]}";
+    
+    std::string fallbackMsg = ChatSDK::formatPrefix() + "\xC2\xA7" + "8[\xC2\xA7" + "cAC\xC2\xA7" + "8] " + cleanMsg + " \xC2\xA7" + "8[\xC2\xA7" + "cWDR\xC2\xA7" + "8]";
+    
+    ChatSDK::showJsonMessage(json, fallbackMsg);
+  } else {
+    ChatSDK::showClientMessage(msg);
   }
-  ChatSDK::showClientMessage(msg);
 }
 
 static void tickOnce(JNIEnv *env) {

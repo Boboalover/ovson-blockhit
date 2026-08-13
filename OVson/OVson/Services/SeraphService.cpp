@@ -60,47 +60,83 @@ static void pruneCacheLocked() {
   }
 }
 
+static std::string toLower(const std::string &str) {
+  std::string s = str;
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return (char)std::tolower(c); });
+  return s;
+}
+
 static std::unordered_map<std::string, std::chrono::steady_clock::time_point>
     g_pendingFetches;
 static std::mutex g_pendingMutex;
 
 std::optional<PlayerTags> getPlayerTags(const std::string &username,
                                         const std::string &uuid, bool wait) {
-  if (!Config::isTagsEnabled())
+  if (!Config::isTagsEnabled()) {
+    Logger::tagDebug("[Seraph] Fetch skipped for '%s': Tags disabled in config", username.c_str());
     return std::nullopt;
-  if (Config::getActiveTagService() != "Seraph" &&
-      Config::getActiveTagService() != "Both")
+  }
+  std::string activeSvc = Config::getActiveTagService();
+  if (activeSvc != "Seraph" && activeSvc != "Both") {
+    Logger::tagDebug("[Seraph] Fetch skipped for '%s': Active tag service is '%s'", username.c_str(), activeSvc.c_str());
     return std::nullopt;
-  if (uuid.empty())
+  }
+  if (uuid.empty()) {
+    Logger::tagDebug("[Seraph] Fetch skipped for '%s': UUID is empty", username.c_str());
     return std::nullopt;
+  }
 
+  std::string lowerUuid = toLower(uuid);
   auto now = std::chrono::steady_clock::now();
 
   {
     std::lock_guard<std::mutex> lock(g_cacheMutex);
-    auto it = g_cache.find(uuid);
+    auto it = g_cache.find(lowerUuid);
     if (it != g_cache.end()) {
       auto age = std::chrono::duration_cast<std::chrono::seconds>(
                      now - it->second.timestamp)
                      .count();
-      if (age < CACHE_EXPIRY_SECONDS)
+      if (age < CACHE_EXPIRY_SECONDS) {
+        Logger::tagDebug("[Seraph] Cache hit for '%s' (uuid: %s, age: %llds, tags: %zu)", username.c_str(), lowerUuid.c_str(), (long long)age, it->second.data.tags.size());
         return it->second.data;
+      }
     }
   }
 
+  {
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    if (g_pendingFetches.count(lowerUuid)) {
+      auto age = std::chrono::duration_cast<std::chrono::seconds>(
+                     now - g_pendingFetches[lowerUuid])
+                     .count();
+      if (age < 10) {
+        if (!wait) {
+          Logger::tagDebug("[Seraph] Async fetch skipped (already pending) for '%s' (uuid: %s)", username.c_str(), lowerUuid.c_str());
+          return std::nullopt;
+        }
+      }
+    }
+    g_pendingFetches[lowerUuid] = now;
+  }
+
   if (wait) {
-    std::string url = "https://api.seraph.si/" + uuid + "/blacklist";
+    std::string url = "https://api.seraph.si/" + lowerUuid + "/blacklist";
     std::string apiKey = Config::getSeraphApiKey();
-    if (apiKey.empty())
+    if (apiKey.empty()) {
+      std::lock_guard<std::mutex> lock(g_pendingMutex);
+      g_pendingFetches.erase(lowerUuid);
+      Logger::tagDebug("[Seraph] Sync fetch failed for '%s': API key is empty", username.c_str());
       return std::nullopt;
+    }
 
     std::string body;
-    Logger::log(Config::DebugCategory::Seraph,
-                "=== Seraph Sync Fetching: %s ===", username.c_str());
+    Logger::tagDebug("[Seraph] Sync GET request for '%s' (uuid: %s)", username.c_str(), lowerUuid.c_str());
     bool ok = Http::get(url, body, "seraph-api-key", apiKey);
+    Logger::tagDebug("[Seraph] Http::get ok=%d, bodyLen=%zu", ok ? 1 : 0, body.size());
 
     PlayerTags result;
-    result.uuid = uuid;
+    result.uuid = lowerUuid;
 
     if (ok && !body.empty() &&
         body.find("\"success\":true") != std::string::npos) {
@@ -135,49 +171,61 @@ std::optional<PlayerTags> getPlayerTags(const std::string &username,
       {
         std::lock_guard<std::mutex> lock(g_cacheMutex);
         pruneCacheLocked();
-        g_cache[uuid] = {result, std::chrono::steady_clock::now()};
+        g_cache[lowerUuid] = {result, std::chrono::steady_clock::now()};
+      }
+      {
+        std::lock_guard<std::mutex> lock(g_pendingMutex);
+        g_pendingFetches.erase(lowerUuid);
+      }
+      Logger::tagDebug("[Seraph] Sync Success for '%s' (uuid: %s, tags: %zu)", username.c_str(), lowerUuid.c_str(), result.tags.size());
+      for (const auto &t : result.tags) {
+        Logger::tagDebug("  -> Tag: type='%s', reason='%s'", t.type.c_str(), t.reason.c_str());
       }
       return result;
+    } else {
+      {
+        std::lock_guard<std::mutex> lock(g_cacheMutex);
+        pruneCacheLocked();
+        g_cache[lowerUuid] = {result, std::chrono::steady_clock::now()};
+      }
+      {
+        std::lock_guard<std::mutex> lock(g_pendingMutex);
+        g_pendingFetches.erase(lowerUuid);
+      }
+      Logger::tagDebug("[Seraph] Sync Failed for '%s', ok=%d, bodySnippet: %s", username.c_str(), ok ? 1 : 0, body.substr(0, 150).c_str());
     }
     return std::nullopt;
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(g_pendingMutex);
-    if (g_pendingFetches.count(uuid)) {
-      auto age = std::chrono::duration_cast<std::chrono::seconds>(
-                     now - g_pendingFetches[uuid])
-                     .count();
-      if (age < 10)
-        return std::nullopt;
-    }
-    g_pendingFetches[uuid] = now;
   }
 
   ThreadTracker::increment();
   if (ThreadTracker::g_activeThreads.load() > 12) {
     ThreadTracker::decrement();
     std::lock_guard<std::mutex> lock(g_pendingMutex);
-    g_pendingFetches.erase(uuid);
+    g_pendingFetches.erase(lowerUuid);
+    Logger::tagDebug("[Seraph] Async thread skipped for '%s': Too many active threads (%d)", username.c_str(), ThreadTracker::g_activeThreads.load());
     return std::nullopt;
   }
-  std::thread([username, uuid]() {
+
+  std::thread([username, lowerUuid]() {
     SafeGuard::installSehTranslator();
     SafeGuard::run("Seraph::worker", [&]() {
       if (ThreadTracker::shouldStop()) return;
-      std::string url = "https://api.seraph.si/" + uuid + "/blacklist";
+      std::string url = "https://api.seraph.si/" + lowerUuid + "/blacklist";
       std::string apiKey = Config::getSeraphApiKey();
       if (apiKey.empty()) {
+        Logger::tagDebug("[Seraph] Async worker failed for '%s': API key is empty", username.c_str());
         std::lock_guard<std::mutex> lock(g_pendingMutex);
-        g_pendingFetches.erase(uuid);
+        g_pendingFetches.erase(lowerUuid);
         return;
       }
 
       std::string body;
+      Logger::tagDebug("[Seraph] Async worker started for '%s' (uuid: %s)", username.c_str(), lowerUuid.c_str());
       bool ok = Http::get(url, body, "seraph-api-key", apiKey);
+      Logger::tagDebug("[Seraph] Async Http::get ok=%d, bodyLen=%zu", ok ? 1 : 0, body.size());
 
       PlayerTags result;
-      result.uuid = uuid;
+      result.uuid = lowerUuid;
 
       if (ok && !body.empty() &&
           body.find("\"success\":true") != std::string::npos) {
@@ -209,17 +257,27 @@ std::optional<PlayerTags> getPlayerTags(const std::string &username,
             result.tags.push_back({reportType, tooltip});
           }
         }
-      }
-
-      {
-        std::lock_guard<std::mutex> lock(g_cacheMutex);
-        pruneCacheLocked();
-        g_cache[uuid] = {result, std::chrono::steady_clock::now()};
+        {
+          std::lock_guard<std::mutex> lock(g_cacheMutex);
+          pruneCacheLocked();
+          g_cache[lowerUuid] = {result, std::chrono::steady_clock::now()};
+        }
+        Logger::tagDebug("[Seraph] Async Success for '%s' (uuid: %s, tags: %zu)", username.c_str(), lowerUuid.c_str(), result.tags.size());
+        for (const auto &t : result.tags) {
+          Logger::tagDebug("  -> Tag: type='%s', reason='%s'", t.type.c_str(), t.reason.c_str());
+        }
+      } else {
+        {
+          std::lock_guard<std::mutex> lock(g_cacheMutex);
+          pruneCacheLocked();
+          g_cache[lowerUuid] = {result, std::chrono::steady_clock::now()};
+        }
+        Logger::tagDebug("[Seraph] Async Failed for '%s', ok=%d, bodySnippet: %s", username.c_str(), ok ? 1 : 0, body.substr(0, 150).c_str());
       }
 
       {
         std::lock_guard<std::mutex> lock(g_pendingMutex);
-        g_pendingFetches.erase(uuid);
+        g_pendingFetches.erase(lowerUuid);
       }
     });
     ThreadTracker::decrement();

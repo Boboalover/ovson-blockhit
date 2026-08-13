@@ -177,8 +177,10 @@ public:
     GetClass("net.minecraft.client.gui.GuiIngame");
     GetClass("net.minecraft.client.gui.GuiPlayerTabOverlay");
     GetClass("net.minecraft.util.IChatComponent");
+    GetClass("net.minecraft.util.IChatComponent$Serializer");
     GetClass("net.minecraft.client.gui.GuiChat");
     GetClass("net.minecraft.client.gui.GuiScreen");
+    GetClass("net.minecraft.event.HoverEvent$Action");
     GetClass("net.minecraft.client.gui.GuiTextField");
     GetClass("net.minecraft.client.renderer.ActiveRenderInfo");
     GetClass("net.minecraft.client.renderer.entity.RenderManager");
@@ -273,6 +275,11 @@ public:
         {"net.minecraft.util.ChatStyle", "ez"},
         {"net.minecraft.event.HoverEvent", "ew"},
         {"net.minecraft.event.HoverEvent$Action", "ew$a"},
+        {"net.minecraft.util.IChatComponent$Serializer", "eu$a"},
+        {"net.minecraft.entity.player.EntityPlayer", "wn"},
+        {"net.minecraft.entity.player.InventoryPlayer", "wm"},
+        {"net.minecraft.item.ItemArmor", "yv"},
+        {"net.minecraft.item.Item", "zw"},
     };
     auto nit = notchMap.find(className);
     if (nit != notchMap.end()) {

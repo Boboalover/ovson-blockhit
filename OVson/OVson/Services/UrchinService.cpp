@@ -13,6 +13,7 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+#include "../Services/Hypixel.h"
 
 namespace Urchin {
 struct CachedTags {
@@ -75,7 +76,7 @@ static std::vector<Tag> parseTags(const std::string &arrJson) {
       break;
     std::string obj = arrJson.substr(pos, objEnd - pos + 1);
     Tag tag;
-    findJsonString(obj, "type", tag.type);
+    findJsonString(obj, "tag_type", tag.type);
     findJsonString(obj, "reason", tag.reason);
     if (!tag.type.empty()) {
       tags.push_back(tag);
@@ -110,59 +111,83 @@ static void pruneCacheLocked() {
   }
 }
 
+static std::string toLower(const std::string &str) {
+  std::string s = str;
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return (char)std::tolower(c); });
+  return s;
+}
+
 static std::unordered_map<std::string, std::chrono::steady_clock::time_point>
     g_pendingFetches;
 static std::mutex g_pendingMutex;
 
 std::optional<PlayerTags> getPlayerTags(const std::string &username,
                                         bool wait) {
-  if (!Config::isTagsEnabled())
-    return std::nullopt;
-  if (Config::getActiveTagService() != "Urchin" &&
-      Config::getActiveTagService() != "Both")
-    return std::nullopt;
+  if (username.empty()) return std::nullopt;
+  if (!Config::isTagsEnabled()) return std::nullopt;
+  std::string activeSvc = Config::getActiveTagService();
+  if (activeSvc != "Urchin" && activeSvc != "Both") return std::nullopt;
 
+  std::string lowerUser = toLower(username);
   auto now = std::chrono::steady_clock::now();
 
   {
     std::lock_guard<std::mutex> lock(g_cacheMutex);
-    auto it = g_cache.find(username);
+    auto it = g_cache.find(lowerUser);
     if (it != g_cache.end()) {
       auto age = std::chrono::duration_cast<std::chrono::seconds>(
                      now - it->second.timestamp)
                      .count();
       if (age < CACHE_EXPIRY_SECONDS) {
-        Logger::log(Config::DebugCategory::Urchin,
-                    "--- Urchin Cache Hit: %s ---", username.c_str());
+        Logger::tagDebug("[Urchin] Cache hit for '%s' (age %llds, tags: %zu)", username.c_str(), (long long)age, it->second.data.tags.size());
         return it->second.data;
       }
     }
   }
 
-  if (!wait && OVson::isInPreGameLobby())
+  {
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    auto it = g_pendingFetches.find(lowerUser);
+    if (it != g_pendingFetches.end()) {
+      auto age = std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count();
+      if (age < 10) {
+        if (!wait) {
+          Logger::tagDebug("[Urchin] Async fetch skipped (already pending) for '%s'", username.c_str());
+          return std::nullopt;
+        }
+      }
+    }
+    g_pendingFetches[lowerUser] = now;
+  }
+
+  if (!wait && OVson::isInPreGameLobby()) {
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    g_pendingFetches.erase(lowerUser);
+    Logger::tagDebug("[Urchin] Async fetch skipped for '%s': In pre-game lobby", username.c_str());
     return std::nullopt;
+  }
 
   if (wait) {
-    std::string url =
-        "https://urchin.ws/player/" + username + "?sources=MANUAL";
     std::string apiKey = Config::getUrchinApiKey();
+    std::string url = "https://api.urchin.gg/v3/player/tags?player=" + username;
     if (!apiKey.empty()) {
       url += "&key=" + apiKey;
     }
 
     std::string body;
-    Logger::log(Config::DebugCategory::Urchin,
-                "=== Urchin Sync Fetching: %s ===", username.c_str());
+    Logger::tagDebug("[Urchin] Sync GET request for '%s' (API key set: %s)", username.c_str(), apiKey.empty() ? "NO" : "YES");
 
     bool ok = false;
     int maxRetries = 3;
     for (int attempt = 0; attempt < maxRetries; ++attempt) {
-      ok = Http::get(url, body);
-
+      ok = Http::get(url, body, "X-API-Key", apiKey);
+      Logger::tagDebug("[Urchin] Http::get attempt %d ok=%d, bodyLen=%zu", attempt + 1, ok ? 1 : 0, body.size());
 
       if (body.find("Rate limit exceeded") != std::string::npos ||
           body.find("rate limit") != std::string::npos ||
           body.find("429") != std::string::npos) {
+        Logger::tagDebug("[Urchin] Rate limit hit for '%s' (attempt %d): %s", username.c_str(), attempt + 1, body.substr(0, 100).c_str());
         if (attempt < maxRetries - 1) {
           std::this_thread::sleep_for(std::chrono::seconds(10));
           continue;
@@ -182,56 +207,66 @@ std::optional<PlayerTags> getPlayerTags(const std::string &username,
       {
         std::lock_guard<std::mutex> lock(g_cacheMutex);
         pruneCacheLocked();
-        g_cache[username] = {result, std::chrono::steady_clock::now()};
+        g_cache[lowerUser] = {result, std::chrono::steady_clock::now()};
       }
-      Logger::log(Config::DebugCategory::Urchin,
-                  ">>> Urchin Sync Success: %s Found %d tags <<<",
-                  username.c_str(), (int)result.tags.size());
+      {
+        std::lock_guard<std::mutex> lock(g_pendingMutex);
+        g_pendingFetches.erase(lowerUser);
+      }
+      Logger::tagDebug("[Urchin] Sync Success for '%s' (uuid: %s, tags: %zu)", username.c_str(), result.uuid.c_str(), result.tags.size());
+      for (const auto &t : result.tags) {
+        Logger::tagDebug("  -> Tag: type='%s', reason='%s'", t.type.c_str(), t.reason.c_str());
+      }
       return result;
+    } else {
+      {
+        std::lock_guard<std::mutex> lock(g_cacheMutex);
+        pruneCacheLocked();
+        g_cache[lowerUser] = {result, std::chrono::steady_clock::now()};
+      }
+      {
+        std::lock_guard<std::mutex> lock(g_pendingMutex);
+        g_pendingFetches.erase(lowerUser);
+      }
+      Logger::tagDebug("[Urchin] Sync Failed for '%s', ok=%d, bodySnippet: %s", username.c_str(), ok ? 1 : 0, body.substr(0, 150).c_str());
     }
     return std::nullopt;
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(g_pendingMutex);
-    auto it = g_pendingFetches.find(username);
-    if (it != g_pendingFetches.end()) {
-      auto age =
-          std::chrono::duration_cast<std::chrono::seconds>(now - it->second)
-              .count();
-      if (age < 10)
-        return std::nullopt;
-    }
-    g_pendingFetches[username] = now;
   }
 
   ThreadTracker::increment();
   if (ThreadTracker::g_activeThreads.load() > 12) {
     ThreadTracker::decrement();
     std::lock_guard<std::mutex> lock(g_pendingMutex);
-    g_pendingFetches.erase(username);
+    g_pendingFetches.erase(lowerUser);
+    Logger::tagDebug("[Urchin] Async thread skipped for '%s': Too many active threads (%d)", username.c_str(), ThreadTracker::g_activeThreads.load());
     return std::nullopt;
   }
-  std::thread([username, now]() {
+
+  std::thread([username, lowerUser]() {
     SafeGuard::installSehTranslator();
     SafeGuard::run("Urchin::worker", [&]() {
       if (ThreadTracker::shouldStop()) return;
-      std::string url =
-          "https://urchin.ws/player/" + username + "?sources=MANUAL";
       std::string apiKey = Config::getUrchinApiKey();
+      
+      std::string url = "https://api.urchin.gg/v3/player/tags?player=" + username;
       if (!apiKey.empty()) {
         url += "&key=" + apiKey;
       }
 
-      bool ok = false;
       std::string body;
+      Logger::tagDebug("[Urchin] Async worker started for '%s' (API key set: %s)", username.c_str(), apiKey.empty() ? "NO" : "YES");
+
+      bool ok = false;
       int maxRetries = 3;
       for (int attempt = 0; attempt < maxRetries; ++attempt) {
         if (ThreadTracker::shouldStop()) return;
-        ok = Http::get(url, body);
+        ok = Http::get(url, body, "X-API-Key", apiKey);
+        Logger::tagDebug("[Urchin] Async Http::get attempt %d ok=%d, bodyLen=%zu", attempt + 1, ok ? 1 : 0, body.size());
+
         if (body.find("Rate limit exceeded") != std::string::npos ||
             body.find("rate limit") != std::string::npos ||
             body.find("429") != std::string::npos) {
+          Logger::tagDebug("[Urchin] Async Rate limit hit for '%s' (attempt %d): %s", username.c_str(), attempt + 1, body.substr(0, 100).c_str());
           if (attempt < maxRetries - 1) {
             std::this_thread::sleep_for(std::chrono::seconds(10));
             continue;
@@ -266,25 +301,21 @@ std::optional<PlayerTags> getPlayerTags(const std::string &username,
       {
         std::lock_guard<std::mutex> lock(g_cacheMutex);
         pruneCacheLocked();
-        g_cache[username] = {result, std::chrono::steady_clock::now()};
+        g_cache[lowerUser] = {result, std::chrono::steady_clock::now()};
       }
 
       {
         std::lock_guard<std::mutex> lock(g_pendingMutex);
-        g_pendingFetches.erase(username);
+        g_pendingFetches.erase(lowerUser);
       }
 
       if (success) {
-        Logger::log(Config::DebugCategory::Urchin,
-                    ">>> Urchin Success: %s Found %d tags <<<",
-                    username.c_str(), (int)result.tags.size());
-
-      } else {
-        if (Config::isGlobalDebugEnabled()) {
-          Logger::log(Config::DebugCategory::Urchin,
-                      "!!! Urchin Failed: %s - Reason: %s !!!",
-                      username.c_str(), failReason.c_str());
+        Logger::tagDebug("[Urchin] Async Success for '%s' (uuid: %s, tags: %zu)", username.c_str(), result.uuid.c_str(), result.tags.size());
+        for (const auto &t : result.tags) {
+          Logger::tagDebug("  -> Tag: type='%s', reason='%s'", t.type.c_str(), t.reason.c_str());
         }
+      } else {
+        Logger::tagDebug("[Urchin] Async Failed for '%s' - Reason: %s, bodySnippet: %s", username.c_str(), failReason.c_str(), body.substr(0, 150).c_str());
       }
     });
     ThreadTracker::decrement();
