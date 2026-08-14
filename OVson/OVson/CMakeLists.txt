@@ -4,6 +4,13 @@ project(OVson LANGUAGES CXX RC)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(PROJECT_IS_TOP_LEVEL)
+    option(OVSON_BUILD_TESTS "Build OVson's deterministic tests" ON)
+    if(OVSON_BUILD_TESTS)
+        include(CTest)
+    endif()
+endif()
+
 # Definitions
 add_definitions(-DWIN32 -D_WINDOWS -D_USRDLL -D_WINDLL -DOVSON_EXPORTS -D_CRT_SECURE_NO_WARNINGS)
 
@@ -21,8 +28,13 @@ endif()
 set(OVSON_SOURCES
     dllmain.cpp
     Config/Config.cpp
+    Config/StatColors.cpp
     Net/Http.cpp
     Services/Hypixel.cpp
+    Services/AbyssService.cpp
+    Services/AuroraService.cpp
+    Services/KhadowService.cpp
+    Services/PrismService.cpp
     Logic/StatsTracker.cpp
     Logic/McBindings.cpp
     Logic/ScoreboardTeams.cpp
@@ -32,21 +44,50 @@ set(OVSON_SOURCES
     Logic/PlayerStatsFetch.cpp
     Logic/StatsPoll.cpp
     Logic/McLogTail.cpp
+    Logic/PacketHook.cpp
+    Logic/BlockHitAudio.cpp
+    Logic/BlockHitAudioBackend.cpp
+    Logic/BlockHitHeuristic.cpp
+    Logic/BlockHitSound.cpp
+    Chat/ChatAPI_Bridge.cpp
     Chat/ChatHook.cpp
     Chat/ChatSDK.cpp
     Chat/Commands.cpp
+    ClickGUI/ClickGUI_Bridge.cpp
+    ClickGUI/Helpers.cpp
+    ClickGUI/Input.cpp
+    ClickGUI/Lifecycle.cpp
+    ClickGUI/LiquidGlass.cpp
+    ClickGUI/Render.cpp
+    ClickGUI/State.cpp
+    ClickGUI/Tabs/Colors.cpp
+    ClickGUI/Tabs/Debug.cpp
+    ClickGUI/Tabs/Players.cpp
+    ClickGUI/Tabs/Plugins.cpp
+    ClickGUI/Tabs/Settings.cpp
+    ClickGUI/Tabs/Tags.cpp
+    ClickGUI/Tabs/Utils.cpp
+    ClickGUI/Tabs/Visuals.cpp
+    JavaHook/JavaHook.cpp
+    Plugins/PluginLoader.cpp
     Utils/Logger.cpp
+    Utils/CrashDump.cpp
+    Utils/NumberDenicker.cpp
+    Utils/Watchdog.cpp
     SDK/Minecraft.cpp
     SDK/Player.cpp
+    Render/BetterTab.cpp
+    Render/Framebuffer.cpp
     Render/FontRenderer.cpp
+    Render/GL.cpp
     Render/StatsOverlay.cpp
     Render/RenderHook.cpp
     Render/DefenseRenderer.cpp
     Render/NameTagRenderer.cpp
     Render/TextureLoader.cpp
     Render/NotificationManager.cpp
-    Render/ClickGUI.cpp
     Render/RenderUtils.cpp
+    Render/Shader.cpp
     Render/TechOverlay.cpp
     Logic/BedDefense/BedDefenseManager.cpp
     Logic/BedDefense/BlockHook.cpp
@@ -68,10 +109,23 @@ set(OVSON_HEADERS
     Java.h
     resource.h
     Config/Config.h
+    Config/StatColors.h
     Net/Http.h
     Services/Hypixel.h
     Logic/StatsTracker.h
     Logic/StatsTracker.internal.h
+    Logic/BlockHitHeuristic.h
+    Logic/BlockHitAudio.h
+    Logic/BlockHitAudioBackend.h
+    ClickGUI/ClickGUI.h
+    ClickGUI/ClickGUI_Bridge.h
+    ClickGUI/Helpers.h
+    ClickGUI/LiquidGlass.h
+    ClickGUI/State.h
+    ClickGUI/Tabs/Tabs.h
+    ClickGUI/Theme.h
+    JavaHook/JavaHook.h
+    Plugins/PluginLoader.h
     Chat/ChatHook.h
     Chat/ChatSDK.h
     Chat/Commands.h
@@ -92,30 +146,124 @@ set(OVSON_HEADERS
     SDK/Minecraft.h
     SDK/Player.h
     Render/FontRenderer.h
+    Render/BetterTab.h
+    Render/Framebuffer.h
+    Render/GL.h
     Render/StatsOverlay.h
     Render/RenderHook.h
     Render/DefenseRenderer.h
     Render/NameTagRenderer.h
     Render/NotificationManager.h
-    Render/ClickGUI.h
     Render/RenderUtils.h
+    Render/Shader.h
     Render/TextureLoader.h
     Render/TechOverlay.h
     Logic/BedDefense/BedDefenseManager.h
     Logic/BedDefense/BlockHook.h
     Logic/AutoGG.h
+    Logic/PacketHook.h
+    Logic/BlockHitSound.h
+    Logic/PacketFilterHook_bytes.h
+    Logic/PacketFilterHook.java
     Utils/ChatBypasser.h
+    Utils/CrashDump.h
+    Utils/NumberDenicker.h
     Utils/SafeGuard.h
+    Utils/Watchdog.h
     Utils/Anticheat/Anticheat.h
     Utils/Anticheat/AcInternal.h
     Services/UrchinService.h
     Services/SeraphService.h
+    Services/AbyssService.h
+    Services/AuroraService.h
+    Services/KhadowService.h
+    Services/PrismService.h
     Services/DiscordManager.h
     Utils/ReplaySpammer.h
 )
 
+if(MSVC)
+    # Keep the focused block-hit additions at the requested warning level even
+    # though the legacy project does not yet enable /W4 globally.
+    set_source_files_properties(
+        Config/Config.cpp
+        Logic/PacketHook.cpp
+        Logic/BlockHitAudio.cpp
+        Logic/BlockHitAudioBackend.cpp
+        Logic/BlockHitSound.cpp
+        ClickGUI/Render.cpp
+        ClickGUI/Tabs/Utils.cpp
+        PROPERTIES COMPILE_OPTIONS "/W4"
+    )
+endif()
+
+# The DLL embeds the plugin API. Build it in the binary tree so a clean
+# checkout does not require a pre-generated JAR in the source directory.
+find_package(Java COMPONENTS Development QUIET)
+if(NOT Java_FOUND)
+    message(FATAL_ERROR
+        "Building OVson requires a JDK with javac and jar. Install a JDK that "
+        "supports 'javac --release 8', or set Java_JAVAC_EXECUTABLE and "
+        "Java_JAR_EXECUTABLE explicitly.")
+endif()
+
+set(OVSON_API_SOURCES
+    ../OVsonAPI/src/net/ovson/api/OVsonAPI.java
+    ../OVsonAPI/src/net/ovson/api/OVsonPlugin.java
+    ../OVsonAPI/src/net/ovson/api/PluginInfo.java
+    ../OVsonAPI/src/net/ovson/api/PluginManager.java
+    ../OVsonAPI/src/net/ovson/api/chat/ChatAPI.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/ClickGUI.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/CustomChoice.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/CustomInput.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/CustomModule.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/CustomSetting.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/CustomSlider.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/CustomToggle.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/ModuleCallback.java
+    ../OVsonAPI/src/net/ovson/api/clickgui/SettingCallback.java
+    ../OVsonAPI/src/net/ovson/api/event/Cancellable.java
+    ../OVsonAPI/src/net/ovson/api/event/ChatReceivedEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/ChatSendEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/Event.java
+    ../OVsonAPI/src/net/ovson/api/event/EventBus.java
+    ../OVsonAPI/src/net/ovson/api/event/EventHandler.java
+    ../OVsonAPI/src/net/ovson/api/event/PlayerJoinEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/Render2DEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/TickEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/network/PacketEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/network/PacketReceiveEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/network/PacketSendEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/player/AttackEvent.java
+    ../OVsonAPI/src/net/ovson/api/event/player/UpdateEvent.java
+    ../OVsonAPI/src/net/ovson/api/hook/ClassTransformer.java
+    ../OVsonAPI/src/net/ovson/api/hook/TransformerRegistry.java
+    ../OVsonAPI/src/net/ovson/api/player/PlayerAPI.java
+    ../OVsonAPI/src/net/ovson/api/player/PlayerStats.java
+    ../OVsonAPI/src/net/ovson/api/render/RenderAPI.java
+)
+list(TRANSFORM OVSON_API_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+set(OVSON_API_CLASSES_DIR "${CMAKE_CURRENT_BINARY_DIR}/OVsonAPI-classes")
+set(OVSON_API_JAR "${CMAKE_CURRENT_BINARY_DIR}/OVsonAPI.jar")
+add_custom_command(
+    OUTPUT "${OVSON_API_JAR}"
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${OVSON_API_CLASSES_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${OVSON_API_CLASSES_DIR}"
+    COMMAND "${Java_JAVAC_EXECUTABLE}" --release 8
+            -d "${OVSON_API_CLASSES_DIR}" ${OVSON_API_SOURCES}
+    COMMAND "${Java_JAR_EXECUTABLE}" cf "${OVSON_API_JAR}"
+            -C "${OVSON_API_CLASSES_DIR}" .
+    DEPENDS ${OVSON_API_SOURCES}
+    COMMENT "Building Java 8-compatible OVsonAPI.jar"
+    VERBATIM
+)
+add_custom_target(OVsonAPIJar DEPENDS "${OVSON_API_JAR}")
+
 # Create the DLL target
 add_library(OVson SHARED ${OVSON_SOURCES} ${OVSON_HEADERS})
+add_dependencies(OVson OVsonAPIJar)
+set_property(SOURCE Resource.rc APPEND PROPERTY COMPILE_DEFINITIONS
+    "OVSON_API_JAR_PATH=\"${OVSON_API_JAR}\"")
 
 # Include directories
 target_include_directories(OVson PRIVATE
@@ -135,6 +283,9 @@ target_link_libraries(OVson PRIVATE
     Ws2_32.lib
     Advapi32.lib
     Shell32.lib
+    Dbghelp.lib
+    Dsound.lib
+    Dxguid.lib
 )
 
 # Output directory settings (standardize across VS versions)
@@ -143,3 +294,33 @@ set_target_properties(OVson PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
+
+if(OVSON_BUILD_TESTS AND BUILD_TESTING)
+    add_executable(OVsonBlockHitHeuristicTests
+        Logic/BlockHitHeuristic.cpp
+        Logic/BlockHitHeuristic.h
+        tests/BlockHitHeuristicTests.cpp
+    )
+    target_include_directories(OVsonBlockHitHeuristicTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    if(MSVC)
+        target_compile_options(OVsonBlockHitHeuristicTests PRIVATE /W4)
+    endif()
+    add_test(NAME OVson.BlockHitHeuristic
+             COMMAND OVsonBlockHitHeuristicTests)
+
+    add_executable(OVsonBlockHitAudioTests
+        Logic/BlockHitAudio.cpp
+        Logic/BlockHitAudio.h
+        tests/BlockHitAudioTests.cpp
+    )
+    target_include_directories(OVsonBlockHitAudioTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    if(MSVC)
+        target_compile_options(OVsonBlockHitAudioTests PRIVATE /W4)
+    endif()
+    add_test(NAME OVson.BlockHitAudio
+             COMMAND OVsonBlockHitAudioTests)
+endif()

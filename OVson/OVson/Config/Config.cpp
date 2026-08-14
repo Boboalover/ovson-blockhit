@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "../Java.h"
+#include "../Logic/BlockHitAudio.h"
 #include "../Render/NotificationManager.h"
 #include "../Utils/Logger.h"
 #include "StatColors.h"
@@ -149,6 +150,14 @@ static bool g_discordRpcEnabled = true;
 static std::string g_discordAppId = "1467865675262329019";
 static bool g_nickedBypass = true;
 static bool g_rawMouseFixEnabled = false;
+// Off by default because Minecraft 1.8.9 exposes no server-confirmed
+// "damage was blocked" bit; this feature is deliberately heuristic.
+static bool g_blockHitSoundEnabled = BlockHitAudio::kDefaultFeatureEnabled;
+static bool g_blockHitSoundDebugEnabled =
+    BlockHitAudio::kDefaultDebugLoggingEnabled;
+static std::string g_blockHitSoundSource = "Default";
+static std::string g_blockHitSoundFilename = "block-hit.wav";
+static float g_blockHitSoundVolume = BlockHitAudio::kDefaultVolumePercent;
 static bool g_techEnabled = false;
 static bool g_anticheatEnabled = true;
 static bool g_anticheatNoSlowEnabled = true;
@@ -190,7 +199,7 @@ static bool g_debugGeneral = false;
 static std::atomic<bool> g_savePending = false;
 static ULONGLONG g_lastSaveRequest = 0;
 
-static std::string getConfigDir() {
+std::string Config::getDataDirectory() {
   char appdata[MAX_PATH]{};
   if (SUCCEEDED(
           SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
@@ -200,6 +209,8 @@ static std::string getConfigDir() {
   }
   return ".";
 }
+
+static std::string getConfigDir() { return Config::getDataDirectory(); }
 
 static std::string getConfigPath() { return getConfigDir() + "\\config.json"; }
 
@@ -485,6 +496,26 @@ bool Config::initialize(HMODULE self) {
     g_nickedBypass = true;
   if (!parseJsonBool(all, "rawMouseFixEnabled", g_rawMouseFixEnabled))
     g_rawMouseFixEnabled = false;
+  if (!parseJsonBool(all, "blockHitSoundEnabled", g_blockHitSoundEnabled))
+    g_blockHitSoundEnabled = BlockHitAudio::kDefaultFeatureEnabled;
+  if (!parseJsonBool(all, "blockHitSoundDebugEnabled",
+                     g_blockHitSoundDebugEnabled))
+    g_blockHitSoundDebugEnabled = BlockHitAudio::kDefaultDebugLoggingEnabled;
+  if (parseJsonLine(all, "blockHitSoundSource", val))
+    g_blockHitSoundSource = BlockHitAudio::soundSourceName(
+        BlockHitAudio::parseSoundSource(val));
+  else
+    g_blockHitSoundSource = "Default";
+  if (parseJsonLine(all, "blockHitSoundFilename", val) &&
+      BlockHitAudio::isSafeWavFilename(val))
+    g_blockHitSoundFilename = val;
+  else
+    g_blockHitSoundFilename =
+        std::string(BlockHitAudio::kDefaultCustomFilename);
+  if (!parseJsonFloat(all, "blockHitSoundVolume", g_blockHitSoundVolume))
+    g_blockHitSoundVolume = BlockHitAudio::kDefaultVolumePercent;
+  g_blockHitSoundVolume =
+      BlockHitAudio::sanitizeVolumePercent(g_blockHitSoundVolume);
 
   if (g_discordAppId == "1335272304856010773") {
     g_discordAppId = "1467865675262329019";
@@ -713,6 +744,11 @@ static bool saveImpl() {
       "  \"tabSortDescending\": %s,\n"
       "  \"nickedBypass\": %s,\n"
       "  \"rawMouseFixEnabled\": %s,\n"
+      "  \"blockHitSoundEnabled\": %s,\n"
+      "  \"blockHitSoundDebugEnabled\": %s,\n"
+      "  \"blockHitSoundSource\": \"%s\",\n"
+      "  \"blockHitSoundFilename\": \"%s\",\n"
+      "  \"blockHitSoundVolume\": %.2f,\n"
       "  \"sortMode\": \"%s\",\n"
       "  \"ovShowStar\": %s, \"ovShowFk\": %s, \"ovShowFkdr\": %s, "
       "\"ovShowWins\": %s, \"ovShowWlr\": %s, \"ovShowWs\": %s,\n"
@@ -788,6 +824,10 @@ static bool saveImpl() {
       g_tabDisplayMode.c_str(), g_tabSortDescending ? "true" : "false",
       g_nickedBypass ? "true" : "false",
       g_rawMouseFixEnabled ? "true" : "false",
+      g_blockHitSoundEnabled ? "true" : "false",
+      g_blockHitSoundDebugEnabled ? "true" : "false",
+      g_blockHitSoundSource.c_str(), g_blockHitSoundFilename.c_str(),
+      g_blockHitSoundVolume,
       g_sortMode.c_str(),
       g_ovShowStar ? "true" : "false", g_ovShowFk ? "true" : "false",
       g_ovShowFkdr ? "true" : "false", g_ovShowWins ? "true" : "false",
@@ -920,6 +960,53 @@ void Config::setNickedBypass(bool enabled) {
 bool Config::isRawMouseFixEnabled() { return g_rawMouseFixEnabled; }
 void Config::setRawMouseFixEnabled(bool enabled) {
   g_rawMouseFixEnabled = enabled;
+  save();
+}
+
+bool Config::isBlockHitSoundEnabled() { return g_blockHitSoundEnabled; }
+void Config::setBlockHitSoundEnabled(bool enabled) {
+  if (g_blockHitSoundEnabled == enabled) return;
+  g_blockHitSoundEnabled = enabled;
+  save();
+}
+
+bool Config::isBlockHitSoundDebugEnabled() {
+  return g_blockHitSoundDebugEnabled;
+}
+void Config::setBlockHitSoundDebugEnabled(bool enabled) {
+  if (g_blockHitSoundDebugEnabled == enabled) return;
+  g_blockHitSoundDebugEnabled = enabled;
+  save();
+}
+
+const std::string &Config::getBlockHitSoundSource() {
+  return g_blockHitSoundSource;
+}
+void Config::setBlockHitSoundSource(const std::string &source) {
+  const std::string sanitized = BlockHitAudio::soundSourceName(
+      BlockHitAudio::parseSoundSource(source));
+  if (g_blockHitSoundSource == sanitized) return;
+  g_blockHitSoundSource = sanitized;
+  save();
+}
+
+const std::string &Config::getBlockHitSoundFilename() {
+  return g_blockHitSoundFilename;
+}
+void Config::setBlockHitSoundFilename(const std::string &filename) {
+  if (!BlockHitAudio::isSafeWavFilename(filename) ||
+      g_blockHitSoundFilename == filename)
+    return;
+  g_blockHitSoundFilename = filename;
+  save();
+}
+
+float Config::getBlockHitSoundVolume() { return g_blockHitSoundVolume; }
+void Config::setBlockHitSoundVolume(float volumePercent) {
+  const float sanitized =
+      BlockHitAudio::sanitizeVolumePercent(volumePercent);
+  if (g_blockHitSoundVolume == sanitized) return;
+  g_blockHitSoundVolume = sanitized;
   save();
 }
 

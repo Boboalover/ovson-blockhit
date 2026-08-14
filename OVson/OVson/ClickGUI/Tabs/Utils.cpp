@@ -6,19 +6,24 @@
 #include "../../Render/NotificationManager.h"
 #include "../../Config/Config.h"
 #include "../../Logic/BedDefense/BedDefenseManager.h"
+#include "../../Logic/BlockHitSound.h"
 #include "../../Utils/ReplaySpammer.h"
+#include <cstdio>
 #include <gl/GL.h>
+#include <string>
 
 namespace Render {
 namespace Tabs {
 
 void renderUtils(TabCtx &ctx) {
   using namespace ClickGUIState;
+  using namespace ClickGUITheme;
   const float mainX = ctx.mainX;
   const float cx    = ctx.cx;
   float      &cy    = ctx.cy;
   const float mx    = ctx.mx;
   const float my    = ctx.my;
+  const bool  lClick = ctx.lClick;
   const bool  clickEvent = ctx.clickEvent;
   const float alpha = ctx.alpha;
 
@@ -158,6 +163,142 @@ void renderUtils(TabCtx &ctx) {
                   : NotificationType::Warning);
   }
   cy += 110;
+
+  drawSectionLabel(cx, cy, "Block-Hit Sound (Client Heuristic)", alpha);
+  const float blockSoundCardH = 276.0f;
+  bool hBlockSound =
+      isHovered(mx, my, mainX + 190, cy + 30, g_w - 210, blockSoundCardH);
+  glDisable(GL_TEXTURE_2D);
+  drawThemeCard(mainX + 190, cy + 30, g_w - 210, blockSoundCardH,
+                hBlockSound, alpha);
+  glEnable(GL_TEXTURE_2D);
+
+  g_guiFont.drawString(cx, cy + 40, "Correlated Block-Hit Sound",
+                       applyAlpha(0xFFFFFFFF, alpha));
+  g_guiFont.drawString(
+      cx, cy + 58,
+      "Client heuristic only; Minecraft sends no confirmed block result",
+      applyAlpha(0xFFA0A0A5, alpha), 0.43f);
+
+  const float blockSoundSwX = mainX + g_w - 65;
+  bool blockSoundEnabled = Config::isBlockHitSoundEnabled();
+  bool hBlockSoundMaster = hBlockSound && my >= cy + 34 && my < cy + 76;
+  glDisable(GL_TEXTURE_2D);
+  drawSwitch(60, blockSoundSwX, cy + 40, blockSoundEnabled,
+             hBlockSoundMaster, alpha);
+  glEnable(GL_TEXTURE_2D);
+
+  const std::string &source = Config::getBlockHitSoundSource();
+  g_guiFont.drawString(cx + 10, cy + 88, "Sound source",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  const float sourceX = mainX + g_w - 190.0f;
+  const float sourceY = cy + 80.0f;
+  const float sourceW = 61.0f;
+  const float sourceH = 25.0f;
+  const bool hDefault =
+      isHovered(mx, my, sourceX, sourceY, sourceW, sourceH);
+  const bool hCustom =
+      isHovered(mx, my, sourceX + sourceW + 6.0f, sourceY, sourceW, sourceH);
+  glDisable(GL_TEXTURE_2D);
+  drawThemeButton(sourceX, sourceY, sourceW, sourceH, hDefault,
+                  source == "Default", alpha);
+  drawThemeButton(sourceX + sourceW + 6.0f, sourceY, sourceW, sourceH, hCustom,
+                  source == "Custom", alpha);
+  glEnable(GL_TEXTURE_2D);
+  g_guiFont.drawString(sourceX + 8.0f, sourceY + 6.0f, "Default",
+                       applyAlpha(source == "Default" ? accent()
+                                                       : textSecondary(),
+                                  alpha),
+                       0.38f);
+  g_guiFont.drawString(sourceX + sourceW + 14.0f, sourceY + 6.0f, "Custom",
+                       applyAlpha(source == "Custom" ? accent()
+                                                      : textSecondary(),
+                                  alpha),
+                       0.38f);
+  if (clickEvent && hDefault) Config::setBlockHitSoundSource("Default");
+  if (clickEvent && hCustom) Config::setBlockHitSoundSource("Custom");
+
+  float blockSoundVolume = Config::getBlockHitSoundVolume();
+  char volumeText[16]{};
+  snprintf(volumeText, sizeof(volumeText), "%d%%",
+           static_cast<int>(blockSoundVolume + 0.5f));
+  g_guiFont.drawString(cx + 10, cy + 125, "Volume",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  const float volumeTextWidth =
+      g_guiFont.getStringWidth(volumeText) * (0.42f / 0.5f);
+  g_guiFont.drawString(mainX + g_w - 38.0f - volumeTextWidth, cy + 125,
+                       volumeText, applyAlpha(accent(), alpha), 0.42f);
+  if (drawSlider(3060, cx + 76.0f, cy + 132.0f, g_w - 322.0f, 8.0f,
+                 blockSoundVolume, 0.0f, 100.0f, mx, my,
+                 lClick && hBlockSound, alpha)) {
+    Config::setBlockHitSoundVolume(blockSoundVolume);
+  }
+
+  std::string filename = Config::getBlockHitSoundFilename();
+  if (filename.size() > 34U) filename = filename.substr(0U, 31U) + "...";
+  g_guiFont.drawString(cx + 10, cy + 162, "Selected WAV",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  g_guiFont.drawString(cx + 104, cy + 162, filename.c_str(),
+                       applyAlpha(textSecondary(), alpha), 0.40f);
+
+  const char *actionLabels[] = {"Next", "Reload", "Preview", "Folder"};
+  const float actionX = cx + 10.0f;
+  const float actionY = cy + 185.0f;
+  const float actionGap = 7.0f;
+  const float actionAreaW = g_w - 260.0f;
+  const float actionW = (actionAreaW - actionGap * 3.0f) / 4.0f;
+  for (int index = 0; index < 4; ++index) {
+    const float buttonX = actionX + index * (actionW + actionGap);
+    const bool hovered =
+        isHovered(mx, my, buttonX, actionY, actionW, 27.0f);
+    glDisable(GL_TEXTURE_2D);
+    drawThemeButton(buttonX, actionY, actionW, 27.0f, hovered, false, alpha);
+    glEnable(GL_TEXTURE_2D);
+    const float labelW = g_guiFont.getStringWidth(actionLabels[index]) *
+                         (0.38f / 0.5f);
+    g_guiFont.drawString(buttonX + actionW * 0.5f - labelW * 0.5f,
+                         actionY + 7.0f, actionLabels[index],
+                         applyAlpha(hovered ? textPrimary() : textSecondary(),
+                                    alpha),
+                         0.38f);
+    if (clickEvent && hovered) {
+      if (index == 0)
+        BlockHitSound::requestSelectNextCustomSound();
+      else if (index == 1)
+        BlockHitSound::requestCustomSoundReload();
+      else if (index == 2)
+        BlockHitSound::requestPreview();
+      else if (!BlockHitSound::openSoundsDirectory())
+        NotificationManager::getInstance()->add(
+            "Block-Hit Sound", "Could not open the sounds folder",
+            NotificationType::Warning);
+    }
+  }
+
+  bool blockSoundDebug = Config::isBlockHitSoundDebugEnabled();
+  bool hBlockSoundDebug =
+      hBlockSound && my >= cy + 224.0f && my < cy + 266.0f;
+  const float blockSoundDebugAlpha =
+      alpha * (blockSoundEnabled ? 1.0f : 0.4f);
+  g_guiFont.drawString(cx + 10, cy + 239, "Debug trigger/rejection reasons",
+                       applyAlpha(0xFFFFFFFF, blockSoundDebugAlpha), 0.42f);
+  glDisable(GL_TEXTURE_2D);
+  drawSwitch(61, blockSoundSwX, cy + 236, blockSoundDebug,
+             hBlockSoundDebug && blockSoundEnabled, blockSoundDebugAlpha);
+  glEnable(GL_TEXTURE_2D);
+
+  if (clickEvent && hBlockSoundMaster) {
+    Config::setBlockHitSoundEnabled(!blockSoundEnabled);
+    NotificationManager::getInstance()->add(
+        "Utils",
+        !blockSoundEnabled ? "Heuristic Block-Hit Sound Enabled"
+                           : "Heuristic Block-Hit Sound Disabled",
+        !blockSoundEnabled ? NotificationType::Success
+                           : NotificationType::Warning);
+  } else if (clickEvent && hBlockSoundDebug && blockSoundEnabled) {
+    Config::setBlockHitSoundDebugEnabled(!blockSoundDebug);
+  }
+  cy += 326;
 
   g_guiFont.drawString(cx, cy, "Replay Automations",
                        applyAlpha(0xFFFFFFFF, alpha));

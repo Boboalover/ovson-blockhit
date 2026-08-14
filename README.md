@@ -21,6 +21,7 @@ see update progress, report bugs / make suggestions on my discord server.
 - NumberDenicker
 - Changeable stat colors
 - NameTags
+- Optional block-hit sound using a conservative client heuristic ([details](OVson/BLOCK_HIT_SOUND.md))
 
 ---
 
