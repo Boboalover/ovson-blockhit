@@ -1251,13 +1251,6 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
     glEnable(GL_TEXTURE_2D);
   }
 
-  {
-    constexpr const char *credit = "Made by Boboalover";
-    const float creditWidth =
-        g_guiFont.getStringWidth(credit) * (0.4f / 0.5f);
-    g_guiFont.drawString(sw - creditWidth - 16.0f, sh - 22.0f, credit,
-                         applyAlpha(textMuted(), s_animAlpha), 0.4f);
-  }
 }
 
 void ClickGUI::handleScrollB(float mx, float my, int delta) {
@@ -1665,15 +1658,6 @@ void ClickGUI::render(HDC hdc) {
       s_isDropdownOpen = false;
     }
     ty += tabRowH;
-  }
-
-  {
-    constexpr const char *credit = "Made by Boboalover";
-    const float creditWidth =
-        g_guiFont.getStringWidth(credit) * (0.36f / 0.5f);
-    g_guiFont.drawString(mainX + sidebarW * 0.5f - creditWidth * 0.5f,
-                         mainY + g_h - 108.0f, credit,
-                         applyAlpha(textMuted(), s_animAlpha), 0.36f);
   }
 
   {
