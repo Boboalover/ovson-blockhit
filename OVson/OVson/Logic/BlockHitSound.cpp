@@ -135,6 +135,16 @@ std::mutex g_queueMutex;
 std::deque<ServerSignal> g_signalQueue;
 std::atomic<bool> g_acceptCallbacks{false};
 std::atomic<std::uint64_t> g_droppedSignals{0};
+
+// Per-kind arrival counters. The heuristic only logs a decision once a signal
+// has already made it into the detector, so when nothing is heard there is no
+// way to tell "the packet never arrived" apart from "the packet arrived and
+// was rejected". These counters split those two cases: they are incremented
+// at the callback boundary, before any filtering, and dumped periodically
+// next to the local player's blocking/sword state.
+std::atomic<std::uint64_t> g_signalArrivals[8]{};
+std::atomic<std::uint64_t> g_worldResetCount{0};
+std::uint64_t g_lastTelemetryAtMs = 0;
 BlockHitHeuristic::Detector g_detector;
 JniCache g_jni;
 EnvironmentalTracker g_environment;
@@ -461,6 +471,8 @@ void resetBoundary(JNIEnv *env, ResetReason reason, Millis atMs,
        reason == ResetReason::Respawn || reason == ResetReason::Shutdown)) {
     BlockHitAudioBackend::requestStop();
   }
+  if (reason == ResetReason::WorldChanged)
+    g_worldResetCount.fetch_add(1, std::memory_order_relaxed);
   if (Config::isBlockHitSoundDebugEnabled() && result.diagnosticCount > 0) {
     Logger::info("[BlockHitSound/heuristic] state_reset reason=%s",
                  resetReasonName(reason));
@@ -772,6 +784,13 @@ void enqueueServerSignal(ServerSignalKind kind, int entityId, int data1,
                          int data2, int data3, float value1, float, float,
                          std::uint64_t receivedAtMs) {
   if (!g_acceptCallbacks.load(std::memory_order_acquire)) return;
+  {
+    const std::size_t slot = static_cast<std::size_t>(kind);
+    constexpr std::size_t kSlots =
+        sizeof(g_signalArrivals) / sizeof(g_signalArrivals[0]);
+    if (slot < kSlots)
+      g_signalArrivals[slot].fetch_add(1, std::memory_order_relaxed);
+  }
   const ServerSignal signal{kind, entityId, data1, data2, data3, value1,
                             receivedAtMs ? receivedAtMs : GetTickCount64()};
   std::lock_guard<std::mutex> lock(g_queueMutex);
@@ -947,6 +966,43 @@ void update(JNIEnv *env) {
   if (dropped && Config::isBlockHitSoundDebugEnabled()) {
     Logger::info("[BlockHitSound/heuristic] packet_queue_dropped=%llu",
                  static_cast<unsigned long long>(dropped));
+  }
+
+  // Arrival telemetry. Every 2s, dump what the Netty callback actually
+  // delivered since the last dump plus the local state the hurt rule tests
+  // against. Reading this against a fight tells us in one line which link of
+  // the chain is broken: no hurt= means the damage packet is never matched in
+  // PacketFilterHook, hurt>0 with blocking=0 means the blocking field is read
+  // wrong, and a climbing worldResets means the session keeps being wiped
+  // before a swing and a hurt can ever be correlated.
+  if (Config::isBlockHitSoundDebugEnabled() &&
+      now - g_lastTelemetryAtMs >= 2000) {
+    g_lastTelemetryAtMs = now;
+    auto take = [](ServerSignalKind kind) {
+      return static_cast<unsigned long long>(
+          g_signalArrivals[static_cast<std::size_t>(kind)].exchange(
+              0, std::memory_order_relaxed));
+    };
+    const unsigned long long hurt = take(ServerSignalKind::Hurt);
+    const unsigned long long swing = take(ServerSignalKind::Swing);
+    const unsigned long long velocity = take(ServerSignalKind::Velocity);
+    const unsigned long long health = take(ServerSignalKind::Health);
+    const unsigned long long respawn = take(ServerSignalKind::Respawn);
+    const unsigned long long explosion = take(ServerSignalKind::Explosion);
+    if (hurt || swing || velocity || health || respawn || explosion) {
+      Logger::info("[BlockHitSound/telemetry] hurt=%llu swing=%llu vel=%llu "
+                   "health=%llu respawn=%llu boom=%llu | enabled=%d "
+                   "blocking=%d sword=%d hp=%.1f entity=%d pending=%d "
+                   "swings=%zu worldResets=%llu",
+                   hurt, swing, velocity, health, respawn, explosion,
+                   configuredEnabled ? 1 : 0, snapshot.blocking ? 1 : 0,
+                   snapshot.holdingSword ? 1 : 0,
+                   static_cast<double>(snapshot.health), snapshot.entityId,
+                   g_detector.hasPendingHurt() ? 1 : 0,
+                   g_detector.storedSwingCount(),
+                   static_cast<unsigned long long>(
+                       g_worldResetCount.load(std::memory_order_relaxed)));
+    }
   }
 
   env->DeleteLocalRef(player);
