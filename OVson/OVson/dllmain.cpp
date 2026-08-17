@@ -275,10 +275,31 @@ void init(void *instance) {
   }
   Logger::info("Cleanup complete.");
 
+  // People play with several DLLs injected at once. If RenderHook had to
+  // leave one of our hooks installed because someone else chained onto it,
+  // their code path still runs through ours -- unmapping this module would
+  // send them into unmapped memory the next frame or the next keystroke.
+  // Staying resident costs a few hundred KB until the game closes; that is
+  // strictly better than taking another mod (or the process) down with us.
+  const bool stayResident = RenderHook::mustStayLoaded();
+  if (stayResident) {
+    Logger::info("Keeping OVson.dll mapped: another injected module is "
+                 "chained to our hooks. It will be released when the game "
+                 "closes.");
+    // DLL_PROCESS_DETACH is what normally persists the config, and it will
+    // not run for us now (the process-exit detach passes lpReserved != null
+    // and skips it), so save here instead.
+    Config::saveNow();
+  }
+
   Logger::shutdown();
   if (file) {
     fclose(file);
     file = nullptr;
+  }
+
+  if (stayResident) {
+    ExitThread(0);
   }
 
   FreeLibraryAndExitThread(static_cast<HMODULE>(instance), 0);

@@ -133,14 +133,21 @@ static ULONGLONG s_nextAttempt = 0;
 static bool s_addFailureLogged = false;
 
 void PacketHook::update() {
-    if (s_injected) return;
     JNIEnv* env = lc->getEnv();
     if (!env) return;
 
-    // Run the correlator every render update. Packet-hook discovery itself is
-    // intentionally throttled below, but a 2-second detector tick would lose
-    // the short swing/hurt/health ordering windows.
+    // Run the correlator every render update, BEFORE the s_injected early-out
+    // below. Packet-hook discovery is a one-shot job that stops once the hook
+    // is installed, but the correlator has to keep ticking for the entire
+    // session: it is what turns the queued server signals into sounds, and the
+    // signals only start arriving after injection succeeds. Returning early
+    // here would silence block-hit sound permanently the moment the hook went
+    // in. Discovery itself is still throttled further down; the correlator is
+    // deliberately not, because a 2-second tick would lose the short
+    // swing/hurt/health ordering windows.
     BlockHitSound::update(env);
+
+    if (s_injected) return;
 
     jclass mcCls = lc->GetClass("net.minecraft.client.Minecraft");
     if (!mcCls) return;
