@@ -326,16 +326,23 @@ void playerMonitorTeamAndRangeFiltering() {
           "filtered player produced alert");
 }
 
-void playerMonitorEntityReuseDoesNotAlert() {
+void playerMonitorEntityReuseStartsFreshState() {
   PlayerMonitor monitor;
   PlayerAlertOptions options;
   options.items = true;
+  // The first player is seen holding a bow, which marks the bow as already
+  // reported for *that identity*. When the server recycles the entity id for
+  // a different player, the replacement must be tracked from scratch: their
+  // bow is news about someone we have never seen, so it has to alert. If the
+  // replacement wrongly inherited the previous occupant's per-match dedup
+  // state, the bow would be treated as already reported and stay silent.
   auto first = enemy(1, "first");
+  first.heldItem.typeName = "bow";
   monitor.observe({first}, options, 1000);
   auto replacement = enemy(1, "replacement");
   replacement.heldItem.typeName = "bow";
-  require(monitor.observe({replacement}, options, 1100).empty(),
-          "entity reuse inherited old equipment");
+  require(monitor.observe({replacement}, options, 1100).size() == 1,
+          "entity reuse inherited the previous occupant's item state");
 }
 
 void playerMonitorCooldownAndLaterAlert() {
@@ -857,9 +864,12 @@ void matchLongItemStateHandlesRangeAndEntityReuse() {
   require(monitor.observe({original}, options, 20100).empty(),
           "range exit and re-entry forgot a seen item");
 
+  // A different player on the recycled entity id is a brand new identity, so
+  // their bow must alert. Silence here would mean they inherited Original's
+  // "bow already reported" state.
   auto replacement = enemy(12, "Replacement");
   replacement.heldItem = {"bow", "Bow", 0, false};
-  require(monitor.observe({replacement}, options, 20200).empty(),
+  require(monitor.observe({replacement}, options, 20200).size() == 1,
           "new identity inherited the old entity's alert state");
   original.entityId = 44;
   require(monitor.observe({original}, options, 20300).empty(),
@@ -1397,7 +1407,7 @@ int main() {
       {"player initial", playerMonitorIgnoresInitialEquipment},
       {"player armor", playerMonitorArmorTransition},
       {"player filters", playerMonitorTeamAndRangeFiltering},
-      {"player entity reuse", playerMonitorEntityReuseDoesNotAlert},
+      {"player entity reuse", playerMonitorEntityReuseStartsFreshState},
       {"player cooldown", playerMonitorCooldownAndLaterAlert},
       {"player burst capacity", playerMonitorPrunesAndCapsBursts},
       {"bed distance", bedDistanceUnknownAndBoundary},

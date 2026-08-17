@@ -928,9 +928,10 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
       teams->observePlayer(player.identity, player.entityId, player.team,
                            player.teamAuthoritative, now);
 
-    auto owner = m_entityOwners.find(player.entityId);
-    if (owner != m_entityOwners.end() && owner->second != player.identity)
-      owner->second.clear();
+    // Claim this entity id for the current occupant. Per-player alert state
+    // lives in m_players keyed by identity, never by entity id, so a recycled
+    // id simply re-points here and the previous occupant keeps their own
+    // history for when they are seen again under a new entity id.
     m_entityOwners[player.entityId] = player.identity;
 
     auto [it, inserted] = m_players.try_emplace(player.identity);
