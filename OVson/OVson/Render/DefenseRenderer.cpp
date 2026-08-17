@@ -423,7 +423,9 @@ static void drawRoundedRect(float x, float y, float w, float h, float radius,
 void DefenseRenderer::render(void *hdcPtr, double partialTicksManual) {
   HDC hdc = (HDC)hdcPtr;
   BedDefenseManager *manager = BedDefenseManager::getInstance();
-  if (!manager || !manager->isEnabled())
+  // Bedwars may use the detector as non-rendering state.  The unrelated
+  // Bed Defense overlay remains controlled only by its original setting.
+  if (!manager || !manager->isEnabled() || !Config::isBedDefenseEnabled())
     return;
 
   if (!lc)

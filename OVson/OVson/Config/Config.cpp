@@ -139,6 +139,7 @@ static bool g_chatBypasserEnabled = false;
 static std::string g_clickGuiTheme = "Solid";
 static std::string g_clickGuiLayout = "A";
 static std::string g_layoutBData = "";
+static std::string g_bedwarsSettingsData = "";
 static bool g_liquidGlassWiggle = true;
 static bool g_liquidGlassGlow = true;
 static float g_liquidGlassRefractStrength = 0.7f;
@@ -456,6 +457,8 @@ bool Config::initialize(HMODULE self) {
     g_clickGuiLayout = val;
   if (parseJsonLine(all, "layoutBData", val))
     g_layoutBData = val;
+  if (parseJsonLine(all, "bedwarsSettingsData", val))
+    g_bedwarsSettingsData = val;
 
   if (!parseJsonBool(all, "liquidGlassWiggle", g_liquidGlassWiggle))
     g_liquidGlassWiggle = true;
@@ -688,6 +691,7 @@ static bool saveImpl() {
       "  \"clickGuiTheme\": \"%s\",\n"
       "  \"clickGuiLayout\": \"%s\",\n"
       "  \"layoutBData\": \"%s\",\n"
+      "  \"bedwarsSettingsData\": \"%s\",\n"
       "  \"liquidGlassWiggle\": %s,\n"
       "  \"liquidGlassGlow\": %s,\n"
       "  \"liquidGlassRefractStrength\": %.2f,\n"
@@ -769,6 +773,7 @@ static bool saveImpl() {
       g_clickGuiTheme.c_str(),
       g_clickGuiLayout.c_str(),
       g_layoutBData.c_str(),
+      g_bedwarsSettingsData.c_str(),
       g_liquidGlassWiggle ? "true" : "false",
       g_liquidGlassGlow ? "true" : "false",
       g_liquidGlassRefractStrength,
@@ -1144,6 +1149,13 @@ void Config::setClickGuiLayout(const std::string &layout) {
 const std::string &Config::getLayoutBData() { return g_layoutBData; }
 void Config::setLayoutBData(const std::string &data) {
   g_layoutBData = data;
+  save();
+}
+const std::string &Config::getBedwarsSettingsData() {
+  return g_bedwarsSettingsData;
+}
+void Config::setBedwarsSettingsData(const std::string &data) {
+  g_bedwarsSettingsData = data;
   save();
 }
 

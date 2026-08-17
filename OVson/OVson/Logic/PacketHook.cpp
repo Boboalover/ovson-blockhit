@@ -35,22 +35,16 @@ extern "C" JNIEXPORT jstring JNICALL Java_net_ovson_api_hook_PacketFilterHook_pr
     return env->NewStringUTF(res.c_str());
 }
 
-#include <fstream>
 #include <string>
-
-static void logToFile(const std::string& msg) {
-    std::ofstream out("C:/Users/HPC1/Desktop/ovson_packet.log", std::ios::app);
-    if (out.is_open()) {
-        out << msg << std::endl;
-        out.close();
-    }
-}
 
 static bool s_injected = false;
 static jclass s_hookCls = nullptr;
 static jobject s_hookObj = nullptr;
+static ULONGLONG s_nextAttempt = 0;
+static bool s_addFailureLogged = false;
 
 void PacketHook::update() {
+    if (s_injected) return;
     JNIEnv* env = lc->getEnv();
     if (!env) return;
 
@@ -65,7 +59,7 @@ void PacketHook::update() {
 
     static ULONGLONG lastAttempt = 0;
     ULONGLONG now = GetTickCount64();
-    if (now - lastAttempt < 2000) {
+    if (now < s_nextAttempt || now - lastAttempt < 2000) {
         env->DeleteLocalRef(mcObj);
         return;
     }
@@ -278,21 +272,26 @@ void PacketHook::update() {
                         env->CallObjectMethod(pipeline, addBefore, baseName, hookName, s_hookObj);
                         
                         if (env->ExceptionCheck()) {
-                            env->ExceptionClear(); 
-                            logToFile("[PacketHook] Failed to inject. Exception occurred during addBefore.");
-                            Logger::error("[PacketHook] Failed to inject. Exception occurred during addBefore.");
-                            s_injected = true;
+                            env->ExceptionClear();
+                            if (!s_addFailureLogged)
+                                Logger::error("[PacketHook] addBefore failed; retrying in 30 seconds");
+                            s_addFailureLogged = true;
+                            s_nextAttempt = now + 30000;
+                            s_injected = false;
                         } else {
-                            logToFile("[PacketHook] Successfully injected PacketFilterHook into Netty pipeline!");
                             Logger::info("[PacketHook] Successfully injected PacketFilterHook into Netty pipeline!");
                             s_injected = true;
+                            s_addFailureLogged = false;
+                            s_nextAttempt = 0;
                         }
                     }
                     env->DeleteLocalRef(baseName);
                     env->DeleteLocalRef(hookName);
                 } else {
-                    logToFile("[PacketHook] Could not find addBefore or get method on ChannelPipeline.");
-                    Logger::error("[PacketHook] Could not find addBefore or get method on ChannelPipeline.");
+                    if (!s_addFailureLogged)
+                        Logger::error("[PacketHook] Could not resolve pipeline methods; retrying in 30 seconds");
+                    s_addFailureLogged = true;
+                    s_nextAttempt = now + 30000;
                 }
                 env->DeleteLocalRef(pipeline);
             }
@@ -371,5 +370,7 @@ void PacketHook::uninstall() {
     if (s_hookObj) { env->DeleteGlobalRef(s_hookObj); s_hookObj = nullptr; }
     if (s_hookCls) { env->DeleteGlobalRef(s_hookCls); s_hookCls = nullptr; }
     s_injected = false;
+    s_addFailureLogged = false;
+    s_nextAttempt = 0;
 }
 

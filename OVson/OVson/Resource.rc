@@ -90,7 +90,10 @@ END
 
 IDR_MINHOOK_DLL         MINHOOK_DLL             "MinHook\\MinHook.x64.dll"
 IDR_DISCORD_DLL         RCDATA                  "Resources\\discord-rpc.dll"
-IDR_OVSON_API_JAR       RCDATA                  "..\\OVsonAPI.jar"
+#ifndef OVSON_API_JAR_PATH
+#define OVSON_API_JAR_PATH "..\\OVsonAPI.jar"
+#endif
+IDR_OVSON_API_JAR       RCDATA                  OVSON_API_JAR_PATH
 
 /////////////////////////////////////////////////////////////////////////////
 //

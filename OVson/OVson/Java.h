@@ -245,6 +245,7 @@ public:
         {"net.minecraft.entity.Entity", "pk"},
         {"net.minecraft.util.MovingObjectPosition", "auh"},
         {"net.minecraft.util.BlockPos", "cj"},
+        {"net.minecraft.util.EnumFacing", "cq"},
         {"net.minecraft.block.state.IBlockState", "alz"},
         {"net.minecraft.block.Block", "afh"},
         {"net.minecraft.block.BlockBed", "afg"},

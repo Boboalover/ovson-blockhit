@@ -3,6 +3,8 @@
 #include "BedDefenseManager.h"
 #include "../../Config/Config.h"
 #include "../../Java.h"
+#include "../Bedwars/BedwarsConfig.h"
+#include "../Bedwars/BedwarsCore.h"
 #include "../../Utils/Logger.h"
 #include "../../Utils/SafeGuard.h"
 #include <algorithm>
@@ -13,13 +15,26 @@ namespace BedDefense {
 BedDefenseManager *BedDefenseManager::s_instance = nullptr;
 
 BedDefenseManager::BedDefenseManager()
-    : m_enabled(Config::isBedDefenseEnabled()), m_lastRevalidation(0),
-      m_isScanning(false) {
+    : m_enabled(Config::isBedDefenseEnabled()), m_lastFullScan(0),
+      m_isScanning(false), m_cancelScan(false), m_scanGeneration(0) {
   Logger::log(Config::DebugCategory::BedDefense,
               "BedDefenseManager initialized");
 }
 
-BedDefenseManager::~BedDefenseManager() { clearAllBeds(); }
+BedDefenseManager::~BedDefenseManager() {
+  m_enabled = false;
+  cancelScanAndJoin();
+  clearAllBeds();
+}
+
+void BedDefenseManager::cancelScanAndJoin() {
+  m_scanGeneration.fetch_add(1, std::memory_order_acq_rel);
+  m_cancelScan = true;
+  std::lock_guard<std::mutex> lock(m_scanThreadMutex);
+  if (m_scanThread.joinable())
+    m_scanThread.join();
+  m_isScanning = false;
+}
 
 BedDefenseManager *BedDefenseManager::getInstance() {
   if (!s_instance) {
@@ -39,24 +54,30 @@ void BedDefenseManager::enable() {
   if (Config::isForgeEnvironment())
     return;
   m_enabled = true;
+  m_cancelScan = false;
   Logger::log(Config::DebugCategory::BedDefense,
               "Bed defense detection enabled");
 }
 
 void BedDefenseManager::disable() {
   m_enabled = false;
+  cancelScanAndJoin();
+  clearAllBeds();
   Logger::info("Bed defense detection disabled");
 }
 
 void BedDefenseManager::clearAllBeds() {
-  std::lock_guard<std::mutex> lock(m_bedMutex);
-  m_beds.clear();
+  {
+    std::lock_guard<std::mutex> lock(m_bedMutex);
+    m_beds.clear();
+  }
   Logger::log(Config::DebugCategory::BedDetection, "Cleared all detected beds");
 }
 
 void BedDefenseManager::onWorldChange() {
+  cancelScanAndJoin();
   clearAllBeds();
-  m_lastRevalidation = 0;
+  m_lastFullScan = 0;
 }
 
 // ============================================================================
@@ -379,44 +400,11 @@ bool BedDefenseManager::isBed(int x, int y, int z) {
 }
 
 std::string BedDefenseManager::getBedTeamColor(int x, int y, int z) {
-  int meta = getBlockMetadata(x, y, z);
-
-  switch (meta) {
-  case 14:
-    return "RED";
-  case 11:
-    return "BLUE";
-  case 13:
-    return "GREEN";
-  case 4:
-    return "YELLOW";
-  case 1:
-    return "ORANGE";
-  case 0:
-    return "WHITE";
-  case 15:
-    return "BLACK";
-  case 9:
-    return "CYAN";
-  case 5:
-    return "LIME";
-  case 10:
-    return "PURPLE";
-  case 2:
-    return "MAGENTA";
-  case 6:
-    return "PINK";
-  case 12:
-    return "BROWN";
-  case 7:
-    return "GRAY";
-  case 8:
-    return "LIGHT_GRAY";
-  case 3:
-    return "LIGHT_BLUE";
-  default:
-    return "UNKNOWN";
-  }
+  (void)x;
+  (void)y;
+  (void)z;
+  // In 1.8.9 bed metadata describes orientation and head/foot, not team dye.
+  return "UNKNOWN";
 }
 
 void BedDefenseManager::detectBed(int x, int y, int z) {
@@ -425,18 +413,18 @@ void BedDefenseManager::detectBed(int x, int y, int z) {
   if (!isBed(x, y, z))
     return;
 
-  for (auto &pair : m_beds) {
-    DetectedBed &existing = pair.second;
-    if (existing.y == y && existing.distanceSquared(x, y, z) < 2.5) {
-      return;
-    }
-  }
-
   std::string team = getBedTeamColor(x, y, z);
   DetectedBed bed(x, y, z, team);
-
   std::string key = bed.getKey();
-  m_beds[key] = bed;
+  {
+    std::lock_guard<std::mutex> lock(m_bedMutex);
+    for (auto &pair : m_beds) {
+      DetectedBed &existing = pair.second;
+      if (existing.y == y && existing.distanceSquared(x, y, z) < 2.5)
+        return;
+    }
+    m_beds[key] = bed;
+  }
 
   Logger::log(Config::DebugCategory::BedDetection,
               "Detected bed at (%d, %d, %d) - Team: %s", x, y, z, team.c_str());
@@ -445,10 +433,16 @@ void BedDefenseManager::detectBed(int x, int y, int z) {
 void BedDefenseManager::removeBed(int x, int y, int z) {
   DetectedBed temp(x, y, z, "");
   std::string key = temp.getKey();
-
-  auto it = m_beds.find(key);
-  if (it != m_beds.end()) {
-    m_beds.erase(it);
+  bool removed = false;
+  {
+    std::lock_guard<std::mutex> lock(m_bedMutex);
+    auto it = m_beds.find(key);
+    if (it != m_beds.end()) {
+      m_beds.erase(it);
+      removed = true;
+    }
+  }
+  if (removed) {
     Logger::log(Config::DebugCategory::BedDetection,
                 "Removed bed at (%d, %d, %d)", x, y, z);
   }
@@ -456,13 +450,19 @@ void BedDefenseManager::removeBed(int x, int y, int z) {
 
 void BedDefenseManager::markBedDirty(int x, int y, int z, int radius) {
   int radiusSquared = radius * radius;
-
-  for (auto &pair : m_beds) {
-    DetectedBed &bed = pair.second;
-    if (bed.distanceSquared(x, y, z) <= radiusSquared) {
-      bed.dirty = true;
+  bool marked = false;
+  {
+    std::lock_guard<std::mutex> lock(m_bedMutex);
+    for (auto &pair : m_beds) {
+      DetectedBed &bed = pair.second;
+      if (bed.distanceSquared(x, y, z) <= radiusSquared) {
+        bed.dirty = true;
+        marked = true;
+      }
     }
   }
+  if (marked)
+    m_lastFullScan = 0;
 }
 
 void BedDefenseManager::onBlockChange(int x, int y, int z) {
@@ -481,40 +481,53 @@ void BedDefenseManager::onBlockChange(int x, int y, int z) {
 std::string BedDefenseManager::getTeamFromProximity(int bx, int by, int bz) {
   JNIEnv *env = lc->getEnv();
   if (!env)
-    return "BED";
+    return "UNKNOWN";
 
   jclass mcCls = lc->GetClass("net.minecraft.client.Minecraft");
+  if (!mcCls)
+    return "UNKNOWN";
   jfieldID theMc = lc->GetStaticFieldID(mcCls, "theMinecraft",
                                         "Lnet/minecraft/client/Minecraft;",
                                         "field_71432_P", "S", "Lave;");
+  if (!theMc)
+    return "UNKNOWN";
   jobject mcObj = env->GetStaticObjectField(mcCls, theMc);
   if (!mcObj)
-    return "BED";
+    return "UNKNOWN";
 
   jfieldID f_world = lc->GetFieldID(
       mcCls, "theWorld", "Lnet/minecraft/client/multiplayer/WorldClient;",
       "field_71441_e", "f", "Lbdb;");
+  if (!f_world) {
+    env->DeleteLocalRef(mcObj);
+    return "UNKNOWN";
+  }
   jobject world = env->GetObjectField(mcObj, f_world);
   if (!world) {
     env->DeleteLocalRef(mcObj);
-    return "BED";
+    return "UNKNOWN";
   }
 
   jclass worldCls = lc->GetClass("net.minecraft.world.World");
+  jclass bposCls = lc->GetClass("net.minecraft.util.BlockPos");
+  jclass stateCls = lc->GetClass("net.minecraft.block.state.IBlockState");
+  jclass blockCls = lc->GetClass("net.minecraft.block.Block");
+  if (!worldCls || !bposCls || !stateCls || !blockCls) {
+    env->DeleteLocalRef(world);
+    env->DeleteLocalRef(mcObj);
+    return "UNKNOWN";
+  }
   jmethodID m_getState = lc->GetMethodID(
       worldCls, "getBlockState",
       "(Lnet/minecraft/util/BlockPos;)Lnet/minecraft/block/state/IBlockState;",
       "func_180495_p", "p", "(Lcj;)Lalz;");
 
-  jclass bposCls = lc->GetClass("net.minecraft.util.BlockPos");
   jmethodID bposInit = env->GetMethodID(bposCls, "<init>", "(III)V");
 
-  jclass stateCls = lc->GetClass("net.minecraft.block.state.IBlockState");
   jmethodID m_getBlock =
       lc->GetMethodID(stateCls, "getBlock", "()Lnet/minecraft/block/Block;",
                       "func_177230_c", "c", "()Lafh;");
 
-  jclass blockCls = lc->GetClass("net.minecraft.block.Block");
   jmethodID m_getId = lc->GetStaticMethodID(blockCls, "getIdFromBlock",
                                             "(Lnet/minecraft/block/Block;)I",
                                             "func_149682_b", "a", "(Lafh;)I");
@@ -523,71 +536,97 @@ std::string BedDefenseManager::getTeamFromProximity(int bx, int by, int bz) {
                       "(Lnet/minecraft/block/state/IBlockState;)I",
                       "func_176201_c", "c", "(Lalz;)I");
 
-  std::string detectedTeam = "BED";
+  if (!m_getState || !bposInit || !m_getBlock || !m_getId || !m_getMeta) {
+    env->DeleteLocalRef(world);
+    env->DeleteLocalRef(mcObj);
+    return "UNKNOWN";
+  }
 
-  for (int x = bx - 1; x <= bx + 1; x++) {
-    for (int z = bz - 1; z <= bz + 1; z++) {
-      jobject bpos = env->NewObject(bposCls, bposInit, x, by - 1, z);
-      jobject state = env->CallObjectMethod(world, m_getState, bpos);
-      if (state) {
-        jobject block = env->CallObjectMethod(state, m_getBlock);
-        if (block) {
-          int id =
-              m_getId ? env->CallStaticIntMethod(blockCls, m_getId, block) : -1;
-          if (id == 35 || id == 159) {
-            int meta =
-                m_getMeta ? env->CallIntMethod(block, m_getMeta, state) : 0;
-            switch (meta) {
-            case 14:
-              detectedTeam = "RED";
-              break;
-            case 11:
-              detectedTeam = "BLUE";
-              break;
-            case 13:
-              detectedTeam = "GREEN";
-              break;
-            case 4:
-              detectedTeam = "YELLOW";
-              break;
-            case 1:
-              detectedTeam = "ORANGE";
-              break;
-            case 3:
-              detectedTeam = "AQUA";
-              break;
-            case 10:
-              detectedTeam = "PURPLE";
-              break;
-            case 0:
-              detectedTeam = "WHITE";
-              break;
-            }
-          }
-          env->DeleteLocalRef(block);
-        }
-        env->DeleteLocalRef(state);
-      }
-      env->DeleteLocalRef(bpos);
-      if (detectedTeam != "BED")
-        break;
+  auto teamBitForMetadata = [](int metadata) -> unsigned {
+    switch (metadata) {
+    case 14: return 1U << 0; // Red
+    case 11: return 1U << 1; // Blue
+    case 13: return 1U << 2; // Green
+    case 4: return 1U << 3;  // Yellow
+    case 9: return 1U << 4;  // Aqua/cyan
+    case 0: return 1U << 5;  // White
+    case 6: return 1U << 6;  // Pink
+    case 7:
+    case 8: return 1U << 7;  // Gray/light gray
+    default: return 0;
     }
-    if (detectedTeam != "BED")
-      break;
+  };
+  unsigned observedTeams = 0;
+
+  // Team-colored first-layer defenses may be below, beside, or above a bed,
+  // and real Bedwars maps commonly use stained glass panes or carpet for
+  // this instead of (or in addition to) solid wool/glass/clay, and place
+  // it a little further from the bed head than a tight 2-block radius. A
+  // single observed color remains the required evidence; conflicting
+  // colors are still deliberately treated as unknown further below.
+  for (int y = by - 2; y <= by + 3; ++y) {
+    for (int x = bx - 4; x <= bx + 4; ++x) {
+      for (int z = bz - 4; z <= bz + 4; ++z) {
+        jobject bpos = env->NewObject(bposCls, bposInit, x, y, z);
+        jobject state = bpos ? env->CallObjectMethod(world, m_getState, bpos)
+                             : nullptr;
+        if (env->ExceptionCheck()) {
+          env->ExceptionClear();
+          if (bpos) env->DeleteLocalRef(bpos);
+          continue;
+        }
+        if (state) {
+          jobject block = env->CallObjectMethod(state, m_getBlock);
+          if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            block = nullptr;
+          }
+          if (block) {
+            const int id =
+                env->CallStaticIntMethod(blockCls, m_getId, block);
+            // 35 = wool, 95 = stained glass, 159 = stained hardened clay
+            // (terracotta), 160 = stained glass pane, 171 = carpet. All
+            // five use the same EnumDyeColor metadata ordinal, and panes
+            // and carpet are at least as common as solid wool/glass/clay
+            // for team-color accents around a bed on real Bedwars maps.
+            if (!env->ExceptionCheck() &&
+                (id == 35 || id == 95 || id == 159 || id == 160 ||
+                 id == 171)) {
+              const int meta = env->CallIntMethod(block, m_getMeta, state);
+              if (!env->ExceptionCheck())
+                observedTeams |= teamBitForMetadata(meta);
+            }
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(block);
+          }
+          env->DeleteLocalRef(state);
+        }
+        if (bpos) env->DeleteLocalRef(bpos);
+      }
+    }
   }
 
   env->DeleteLocalRef(world);
   env->DeleteLocalRef(mcObj);
-  return detectedTeam;
+  if (observedTeams == 0 || (observedTeams & (observedTeams - 1U)) != 0)
+    return "UNKNOWN";
+  static constexpr const char *names[] = {
+      "RED", "BLUE", "GREEN", "YELLOW", "AQUA", "WHITE", "PINK", "GRAY"};
+  for (unsigned index = 0; index < 8; ++index)
+    if (observedTeams == (1U << index))
+      return names[index];
+  return "UNKNOWN";
 }
 
 void BedDefenseManager::onChunkLoad(int chunkX, int chunkZ) {
-  scanChunkInto(chunkX, chunkZ, m_beds);
+  (void)chunkX;
+  (void)chunkZ;
+  m_lastFullScan = 0;
 }
 void BedDefenseManager::scanChunkInto(
     int chunkX, int chunkZ,
     std::unordered_map<std::string, DetectedBed> &targetMap) {
-  if (!m_enabled || !lc)
+  if (!m_enabled || m_cancelScan || !lc)
     return;
   JNIEnv *env = lc->getEnv();
   if (!env)
@@ -675,16 +714,17 @@ void BedDefenseManager::scanChunkInto(
 
         jclass bedCls = lc->GetClass("net.minecraft.block.BlockBed");
 
-        for (int s = 0; s < 16; s++) {
+        for (int s = 0; s < 16 && m_enabled && !m_cancelScan; s++) {
           jobject storage = env->GetObjectArrayElement(storageArray, s);
           if (!storage)
             continue;
           env->DeleteLocalRef(storage);
 
-          for (int x = 0; x < 16; x++) {
-            for (int z = 0; z < 16; z++) {
+          for (int x = 0; x < 16 && m_enabled && !m_cancelScan; x++) {
+            for (int z = 0; z < 16 && m_enabled && !m_cancelScan; z++) {
               env->PushLocalFrame(20);
-              for (int y = s * 16; y < (s * 16) + 16; y++) {
+              for (int y = s * 16;
+                   y < (s * 16) + 16 && m_enabled && !m_cancelScan; y++) {
                 int wx = (chunkX * 16) + x;
                 int wz = (chunkZ * 16) + z;
 
@@ -741,6 +781,17 @@ void BedDefenseManager::scanChunkInto(
                           bedsFoundInChunk++;
                           std::string team = getTeamFromProximity(wx, y, wz);
                           DetectedBed bed(wx, y, wz, team);
+                          switch (bedMeta & 0x3) {
+                          case 0: bed.secondZ = wz - 1; break;
+                          case 1: bed.secondX = wx + 1; break;
+                          case 2: bed.secondZ = wz + 1; break;
+                          case 3: bed.secondX = wx - 1; break;
+                          default: break;
+                          }
+                          bed.twoBlockStructure =
+                              getBlockName(bed.secondX, bed.secondY,
+                                           bed.secondZ) == "minecraft:bed";
+                          bed.teamAssignmentConfident = team != "UNKNOWN";
                           bed.layers = selectBestLayers(bed);
                           targetMap[bed.getKey()] = bed;
                           Logger::log(Config::DebugCategory::BedDetection,
@@ -1096,21 +1147,60 @@ void BedDefenseManager::forceScan() {
   if (Config::isForgeEnvironment() || !m_enabled || m_isScanning)
     return;
 
-  m_isScanning = true;
-  std::thread([this]() {
-    SafeGuard::installSehTranslator();
-    SafeGuard::run("BedDefense::asyncScanTask",
-                   [this]() { asyncScanTask(); });
-  }).detach();
+  bool startFailed = false;
+  {
+    std::lock_guard<std::mutex> lock(m_scanThreadMutex);
+    if (Config::isForgeEnvironment() || !m_enabled || m_isScanning)
+      return;
+    if (m_scanThread.joinable())
+      m_scanThread.join();
+
+    m_cancelScan = false;
+    m_isScanning = true;
+    const std::uint64_t scanGeneration =
+        m_scanGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    try {
+      m_scanThread = std::thread([this, scanGeneration]() {
+        JavaVM *workerVm = lc ? lc->vm : nullptr;
+        JNIEnv *existingEnv = nullptr;
+        const bool detachWhenDone =
+            workerVm && workerVm->GetEnv(
+                            reinterpret_cast<void **>(&existingEnv),
+                            JNI_VERSION_1_6) == JNI_EDETACHED;
+        try {
+          SafeGuard::installSehTranslator();
+          SafeGuard::run("BedDefense::asyncScanTask",
+                         [this, scanGeneration]() {
+                           asyncScanTask(scanGeneration);
+                         });
+        } catch (...) {
+          m_isScanning = false;
+        }
+        if (detachWhenDone)
+          workerVm->DetachCurrentThread();
+      });
+    } catch (...) {
+      m_isScanning = false;
+      m_cancelScan = true;
+      startFailed = true;
+    }
+  }
+  if (startFailed)
+    Logger::log(Config::DebugCategory::BedDefense,
+                "Unable to start background bed scan");
 }
 
-void BedDefenseManager::asyncScanTask() {
+void BedDefenseManager::asyncScanTask(std::uint64_t scanGeneration) {
   struct ScanGuard {
     std::atomic<bool>& flag;
     ~ScanGuard() { flag = false; }
   } guard{m_isScanning};
 
-  if (Config::isForgeEnvironment() || !lc) {
+  if (Config::isForgeEnvironment() ||
+      !OVson::Bedwars::canPublishBedScanResult(
+          scanGeneration, m_scanGeneration.load(std::memory_order_acquire),
+          m_enabled.load(), m_cancelScan.load()) ||
+      !lc) {
     return;
   }
   JNIEnv *env = lc->getEnv();
@@ -1119,6 +1209,21 @@ void BedDefenseManager::asyncScanTask() {
   }
 
   Logger::log(Config::DebugCategory::BedDefense, "Background scan started...");
+
+  const auto bedwarsSettings = OVson::Bedwars::Configuration::get();
+  const bool useConfiguredRange =
+      bedwarsSettings.masterEnabled &&
+      (bedwarsSettings.enabled(OVson::Bedwars::Module::BedTracker) ||
+       bedwarsSettings.enabled(OVson::Bedwars::Module::AntiMisplace));
+  const int maxChunkRadius =
+      useConfiguredRange
+          ? std::clamp(static_cast<int>(std::ceil(
+                           bedwarsSettings.bedMaximumRange / 16.0F)),
+                       1, 10)
+          : 10;
+  const double maxBlockRange = useConfiguredRange
+                                   ? bedwarsSettings.bedMaximumRange
+                                   : maxChunkRadius * 16.0;
 
   try {
     jclass mcCls = lc->GetClass("net.minecraft.client.Minecraft");
@@ -1149,11 +1254,6 @@ void BedDefenseManager::asyncScanTask() {
         lc->GetFieldID(entityCls, "posX", "D", "field_70165_t", "s");
     jfieldID f_pz =
         lc->GetFieldID(entityCls, "posZ", "D", "field_70161_v", "u");
-
-    if (!f_px)
-      f_px = lc->FindFieldBySignature(entityCls, "D");
-    if (!f_pz)
-      f_pz = lc->FindFieldBySignature(entityCls, "D");
 
     if (f_px && f_pz) {
       double px = env->GetDoubleField(player, f_px);
@@ -1278,9 +1378,10 @@ void BedDefenseManager::asyncScanTask() {
                     std::vector<std::pair<int, int>> chunksToScan;
                     int totalChunksFound = 0;
 
-                    for (int i = 0; i < arraySize; i++) {
+                    for (int i = 0;
+                         i < arraySize && m_enabled && !m_cancelScan; i++) {
                       jobject entry = env->GetObjectArrayElement(hashArray, i);
-                      while (entry) {
+                      while (entry && m_enabled && !m_cancelScan) {
                         if (!entryCls) {
                           entryCls = env->GetObjectClass(entry);
                           f_value = lc->GetFieldID(entryCls, "value",
@@ -1297,8 +1398,8 @@ void BedDefenseManager::asyncScanTask() {
                           initScanVars();
                           int cx = env->GetIntField(chunk, f_cx);
                           int cz = env->GetIntField(chunk, f_cz);
-                          if (std::abs(cx - playerCX) <= 10 &&
-                              std::abs(cz - playerCZ) <= 10) {
+                          if (std::abs(cx - playerCX) <= maxChunkRadius &&
+                              std::abs(cz - playerCZ) <= maxChunkRadius) {
                             scanChunkInto(cx, cz, snapshot);
                             chunksScanned++;
                           }
@@ -1343,16 +1444,14 @@ void BedDefenseManager::asyncScanTask() {
               env->ExceptionClear();
 
             int size = env->CallIntMethod(listing, m_size);
-            const int MAX_CHUNK_RADIUS = 10;
-
-            for (int i = 0; i < size; i++) {
+            for (int i = 0; i < size && m_enabled && !m_cancelScan; i++) {
               jobject chunk = env->CallObjectMethod(listing, m_get, i);
               if (chunk) {
                 initScanVars();
                 int cx = env->GetIntField(chunk, f_cx);
                 int cz = env->GetIntField(chunk, f_cz);
-                if (std::abs(cx - playerCX) <= MAX_CHUNK_RADIUS &&
-                    std::abs(cz - playerCZ) <= MAX_CHUNK_RADIUS) {
+                if (std::abs(cx - playerCX) <= maxChunkRadius &&
+                    std::abs(cz - playerCZ) <= maxChunkRadius) {
                   scanChunkInto(cx, cz, snapshot);
                   chunksScanned++;
                 }
@@ -1362,13 +1461,40 @@ void BedDefenseManager::asyncScanTask() {
             env->DeleteLocalRef(listing);
           }
 
-          if (chunksScanned > 0) {
-            std::lock_guard<std::mutex> lock(m_bedMutex);
-            m_beds = std::move(snapshot);
-
-            Logger::log(Config::DebugCategory::BedDefense,
-                        "Scan Complete: %d chunks. Total Beds: %d",
-                        chunksScanned, (int)m_beds.size());
+          if (useConfiguredRange) {
+            const double maximumSquared = maxBlockRange * maxBlockRange;
+            for (auto it = snapshot.begin(); it != snapshot.end();) {
+              const double dx = static_cast<double>(it->second.x) - px;
+              const double dz = static_cast<double>(it->second.z) - pz;
+              if (dx * dx + dz * dz > maximumSquared)
+                it = snapshot.erase(it);
+              else
+                ++it;
+            }
+          }
+          if (chunksScanned > 0 &&
+              OVson::Bedwars::canPublishBedScanResult(
+                  scanGeneration,
+                  m_scanGeneration.load(std::memory_order_acquire),
+                  m_enabled.load(), m_cancelScan.load())) {
+            std::size_t bedCount = 0;
+            bool published = false;
+            {
+              std::lock_guard<std::mutex> lock(m_bedMutex);
+              if (OVson::Bedwars::canPublishBedScanResult(
+                      scanGeneration,
+                      m_scanGeneration.load(std::memory_order_acquire),
+                      m_enabled.load(), m_cancelScan.load())) {
+                m_beds = std::move(snapshot);
+                bedCount = m_beds.size();
+                published = true;
+              }
+            }
+            if (published) {
+              Logger::log(Config::DebugCategory::BedDefense,
+                          "Scan Complete: %d chunks. Total Beds: %d",
+                          chunksScanned, static_cast<int>(bedCount));
+            }
           }
           env->ReleaseStringUTFChars(jName, nameStr);
           env->DeleteLocalRef(jName);
@@ -1388,23 +1514,20 @@ void BedDefenseManager::tick() {
     return;
   ULONGLONG now = GetTickCount64();
 
-  static ULONGLONG lastNearbyScan = 0;
-  if (now - lastNearbyScan >= 10000) {
-    lastNearbyScan = now;
+  const auto bedwarsSettings = OVson::Bedwars::Configuration::get();
+  const bool useConfiguredInterval =
+      bedwarsSettings.masterEnabled &&
+      (bedwarsSettings.enabled(OVson::Bedwars::Module::BedTracker) ||
+       bedwarsSettings.enabled(OVson::Bedwars::Module::AntiMisplace));
+  const ULONGLONG scanInterval = useConfiguredInterval
+                                     ? static_cast<ULONGLONG>(
+                                           bedwarsSettings.bedScanIntervalMs)
+                                     : 10000ULL;
+  const ULONGLONG lastFullScan = m_lastFullScan.load();
+  if (!m_isScanning &&
+      (lastFullScan == 0 || now - lastFullScan >= scanInterval)) {
+    m_lastFullScan = now;
     forceScan();
-  }
-
-  if (now - m_lastRevalidation >= 500) {
-    m_lastRevalidation = now;
-    std::lock_guard<std::mutex> lock(m_bedMutex);
-    for (auto &pair : m_beds) {
-      DetectedBed &bed = pair.second;
-      if (bed.dirty || (now - bed.lastScan > 10000)) {
-        bed.layers = selectBestLayers(bed);
-        bed.dirty = false;
-        bed.lastScan = now;
-      }
-    }
   }
 }
 } // namespace BedDefense

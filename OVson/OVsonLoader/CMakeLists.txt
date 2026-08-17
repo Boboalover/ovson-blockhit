@@ -12,7 +12,13 @@ set(SLINT_INSTALL_ROOT "C:/Program Files/Slint-cpp 1.16.1"
     CACHE PATH "Slint C++ install root")
 list(APPEND CMAKE_PREFIX_PATH "${SLINT_INSTALL_ROOT}")
 
-find_package(Slint REQUIRED)
+find_package(Slint 1.16.1 CONFIG QUIET)
+if(NOT Slint_FOUND)
+    message(FATAL_ERROR
+        "OVsonLoader requires Slint C++ 1.16.1. Install it under "
+        "'${SLINT_INSTALL_ROOT}', set SLINT_INSTALL_ROOT to its prefix, or "
+        "configure with -DOVSON_BUILD_LOADER=OFF for DLL/tests-only work.")
+endif()
 
 # Everything UI-related lives in slint_ui/. The old UI/, Injection/
 # and Utils/ folders are left in place but no longer compiled — they
@@ -21,6 +27,7 @@ add_executable(OVsonLoader WIN32
     slint_ui/main.cpp
     slint_ui/injector.cpp
     slint_ui/process_scan.cpp
+    slint_ui/shutdown_coordinator.cpp
     slint_ui/updater.cpp
     OVsonLoader.rc
 )

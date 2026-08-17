@@ -88,6 +88,25 @@ void setTeamColorSticky(const std::string &name, const std::string &newTeam, boo
     return;
   }
   g_playerTeamColor[name] = newTeam;
+
+  // g_localTeam (the local player's own team) normally only comes from the
+  // "You are on the X Team!" chat line, which Hypixel sends exactly once
+  // per match. If that single line is missed -- e.g. the DLL was injected
+  // or reattached after the match had already started, or the chat hook
+  // wasn't attached in time -- g_localTeam stays empty for the rest of the
+  // match with no other way to recover it. Every Bedwars Tools feature
+  // that depends on knowing "which bed is ours" (Anti Misplace) or which
+  // nearby players are teammates (Player Alerts) silently stops working in
+  // that case, even though the per-player team map above is still being
+  // populated correctly via the scoreboard/tab list. Mirror any confident
+  // team resolution for the local player's own name into g_localTeam here
+  // as a fallback, without ever overwriting an already-known value.
+  if (g_localTeam.empty() && !g_localName.empty() && name == g_localName &&
+      isRealBedwarsTeam(newTeam)) {
+    g_localTeam = newTeam;
+    Logger::info("Local team resolved via scoreboard fallback: %s",
+                 newTeam.c_str());
+  }
 }
 
 std::string teamFromColorCode(char code) {

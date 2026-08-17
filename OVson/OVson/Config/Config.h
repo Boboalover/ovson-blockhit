@@ -146,6 +146,8 @@ const std::string &getClickGuiLayout();
 void setClickGuiLayout(const std::string &layout);
 const std::string &getLayoutBData();
 void setLayoutBData(const std::string &data);
+const std::string &getBedwarsSettingsData();
+void setBedwarsSettingsData(const std::string &data);
 
 bool isLiquidGlassWiggleEnabled();
 void setLiquidGlassWiggleEnabled(bool enabled);

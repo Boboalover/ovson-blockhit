@@ -46,11 +46,11 @@ DWORD Notification::getBodyColor() const {
 
 void NotificationManager::add(const std::string &title,
                               const std::string &message, NotificationType type,
-                              float duration) {
+                              float duration, std::size_t maximumVisible) {
   std::lock_guard<std::mutex> lock(m_mutex);
 
-  const size_t MAX_NOTIFICATIONS = 20;
-  while (m_notifications.size() >= MAX_NOTIFICATIONS) {
+  const std::size_t limit = std::clamp<std::size_t>(maximumVisible, 1, 20);
+  while (m_notifications.size() >= limit) {
     m_notifications.erase(m_notifications.begin());
   }
 
@@ -58,29 +58,39 @@ void NotificationManager::add(const std::string &title,
   n.title = title;
   n.message = message;
   n.type = type;
-  n.duration = duration;
+  n.duration = std::clamp(duration, 0.5f, 30.0f);
   n.timer = 0.0f;
   n.slideAnim = 0.0f;
   m_notifications.push_back(n);
 
-  OutputDebugStringA(
-      ("[OVson] Notification Added: " + title + " - " + message + "\n")
-          .c_str());
 }
 
-static void drawRect(float x, float y, float w, float h, DWORD color,
-                     float alphaMult = 1.0f) {
-  float r = ((color >> 16) & 0xFF) / 255.0f;
-  float g = ((color >> 8) & 0xFF) / 255.0f;
-  float b = (color & 0xFF) / 255.0f;
-  float a = (((color >> 24) & 0xFF) / 255.0f) * alphaMult;
-  glColor4f(r, g, b, a);
-  glBegin(GL_QUADS);
-  glVertex2f(x, y);
-  glVertex2f(x + w, y);
-  glVertex2f(x + w, y + h);
-  glVertex2f(x, y + h);
-  glEnd();
+void NotificationManager::addRich(
+    const std::string &title,
+    const std::vector<NotificationSegment> &segments, NotificationType type,
+    float duration, std::size_t maximumVisible) {
+  std::string plain;
+  std::vector<NotificationSegment> bounded;
+  bounded.reserve(std::min<std::size_t>(segments.size(), 16));
+  for (std::size_t i = 0; i < segments.size() && i < 16; ++i) {
+    NotificationSegment segment = segments[i];
+    segment.text = segment.text.substr(0, 128);
+    plain += segment.text;
+    bounded.push_back(std::move(segment));
+  }
+  std::lock_guard<std::mutex> lock(m_mutex);
+  const std::size_t limit = std::clamp<std::size_t>(maximumVisible, 1, 20);
+  while (m_notifications.size() >= limit)
+    m_notifications.erase(m_notifications.begin());
+  Notification notification;
+  notification.title = title.substr(0, 128);
+  notification.message = plain.substr(0, 512);
+  notification.type = type;
+  notification.duration = std::clamp(duration, 0.5f, 30.0f);
+  notification.timer = 0.0f;
+  notification.slideAnim = 0.0f;
+  notification.segments = std::move(bounded);
+  m_notifications.push_back(std::move(notification));
 }
 
 static float easeOutCubic(float x) {
@@ -168,7 +178,13 @@ void NotificationManager::render(HDC hdc) {
 
   for (auto it = m_notifications.begin(); it != m_notifications.end();) {
     float titleW = g_notifyFont.getStringWidth(it->title);
-    float msgW   = g_notifyFont.getStringWidth(it->message);
+    float msgW = 0.0f;
+    if (it->segments.empty()) {
+      msgW = g_notifyFont.getStringWidth(it->message);
+    } else {
+      for (const auto &segment : it->segments)
+        msgW += g_notifyFont.getStringWidth(segment.text);
+    }
     float maxContentW = (titleW > msgW) ? titleW : msgW;
     float notifW = textPadL + maxContentW + 22.0f;
     if (notifW < 280.0f) notifW = 280.0f;
@@ -249,8 +265,17 @@ void NotificationManager::render(HDC hdc) {
     glEnable(GL_TEXTURE_2D);
     g_notifyFont.drawString(textX + 8.0f, drawY + 13.0f, it->title,
                             applyAlpha(accent, alpha));
-    g_notifyFont.drawString(textX, drawY + 33.0f, it->message,
-                            applyAlpha(0xFFC8C8D0, alpha));
+    if (it->segments.empty()) {
+      g_notifyFont.drawString(textX, drawY + 33.0f, it->message,
+                              applyAlpha(0xFFC8C8D0, alpha));
+    } else {
+      float segmentX = textX;
+      for (const auto &segment : it->segments) {
+        g_notifyFont.drawString(segmentX, drawY + 33.0f, segment.text,
+                                applyAlpha(segment.color, alpha));
+        segmentX += g_notifyFont.getStringWidth(segment.text);
+      }
+    }
 
     glDisable(GL_TEXTURE_2D);
 

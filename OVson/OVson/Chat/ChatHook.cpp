@@ -8,6 +8,7 @@
 #include "../Logic/StatsTracker.h"
 #include "ChatAPI_Bridge.h"
 #include "../Logic/StatsTracker.internal.h"
+#include "../Logic/Bedwars/BedwarsRuntime.h"
 #include "../Config/StatColors.h"
 #include "../Utils/BedwarsPrestiges.h"
 #include "../Render/RenderHook.h"
@@ -486,6 +487,8 @@ std::string ChatHook::processIncomingChat(const std::string& unformatted, const 
 		g_ignoreNextChat = false;
 		return rawJson;
 	}
+
+	OVson::Bedwars::Runtime::instance().onChatMessage(unformatted);
 
 	OVson::enqueueNativeChat(unformatted);
 

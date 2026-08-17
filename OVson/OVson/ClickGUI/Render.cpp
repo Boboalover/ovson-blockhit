@@ -13,6 +13,10 @@
 #include "../Render/NotificationManager.h"
 #include "../Render/StatsOverlay.h"
 #include "../Logic/BedDefense/BedDefenseManager.h"
+#include "../Logic/Bedwars/BedwarsConfig.h"
+#include "../Logic/Bedwars/BedwarsCore.h"
+#include "../Logic/Bedwars/BedwarsRuntime.h"
+#include "../Render/BedwarsOverlay.h"
 #include "../Config/Config.h"
 #include "../Utils/GlGuard.h"
 #include "../Utils/SensitivityFix.h"
@@ -257,6 +261,7 @@ struct LbSub {
   std::string *inputBufPtr = nullptr;
   std::function<std::string()> sget;
   std::function<void(const std::string &)> sset;
+  std::function<std::string()> labelGet;
   bool isPassword = false;
 };
 struct LbModule {
@@ -265,6 +270,10 @@ struct LbModule {
   std::function<void(bool)> set;
   std::vector<LbSub> subs;   // right-click to reveal
   bool expanded = false;     // sub-settings shown?
+  // Bedwars children expose their saved preference separately so the legacy
+  // layout can render them inactive while the master gate is off without
+  // making that saved preference impossible to turn back off.
+  std::function<bool()> savedGet;
 };
 struct LbWindow {
   const char *title;
@@ -295,6 +304,7 @@ static void setNameTagStat(const std::string &key, bool val) {
 }
 
 static std::vector<LbWindow> s_lbWins;
+static ULONGLONG s_bedwarsResetArmedAt = 0;
 static bool s_lbInit = false;
 
 static LbSub subToggle(const char *n, std::function<bool()> g,
@@ -316,6 +326,12 @@ static LbSub subChoice(const char *n, std::vector<const char *> opts,
 }
 static LbSub subLabel(const char *n) {
   LbSub sb; sb.name = n; sb.kind = LbKind::Label; sb.open = true; return sb;
+}
+static LbSub subDynamicLabel(const char *n,
+                             std::function<std::string()> get) {
+  LbSub sb = subLabel(n);
+  sb.labelGet = std::move(get);
+  return sb;
 }
 static LbSub subInput(const char *n, bool *typingState, std::string *buf,
                       std::function<std::string()> g,
@@ -380,14 +396,22 @@ static void saveLayoutB(const std::vector<LbWindow> &wins) {
 static void loadLayoutB(std::vector<LbWindow> &wins) {
   const std::string &s = Config::getLayoutBData();
   if (s.empty()) return;
-  if (std::count(s.begin(), s.end(), ';') != (long long)wins.size()) return;
+  const std::size_t storedCount =
+      static_cast<std::size_t>(std::count(s.begin(), s.end(), ';'));
+  const bool legacyWithoutBedwars = storedCount + 1 == wins.size();
   size_t i = 0, wi = 0;
   while (i < s.size() && wi < wins.size()) {
     size_t semi = s.find(';', i);
     if (semi == std::string::npos) break;
     float x, y; int o;
     if (sscanf(s.substr(i, semi - i).c_str(), "%f,%f,%d", &x, &y, &o) == 3) {
-      wins[wi].x = x; wins[wi].y = y; wins[wi].open = (o != 0);
+      const std::size_t target =
+          legacyWithoutBedwars && wi >= 2 ? wi + 1 : wi;
+      if (target < wins.size()) {
+        wins[target].x = x;
+        wins[target].y = y;
+        wins[target].open = (o != 0);
+      }
     }
     i = semi + 1;
     ++wi;
@@ -502,6 +526,299 @@ static void ensureLbWindows() {
                         &Config::setNickedBypass, {}});
       w.mods.push_back({"Number Denicker", &Config::isNumberDenickerEnabled,
                         &Config::setNumberDenickerEnabled, {}});
+      s_lbWins.push_back(std::move(w));
+    }
+    {
+      namespace BwConfig = OVson::Bedwars::Configuration;
+      using OVson::Bedwars::Module;
+      using OVson::Bedwars::HudId;
+      using OVson::Bedwars::HudLayout;
+      using OVson::Bedwars::VisibilityMode;
+      LbWindow w{"Bedwars", 30, 360, true, {}};
+      w.mods.push_back({"Bedwars Tools", &BwConfig::isMasterEnabled,
+                        &BwConfig::setMasterEnabled,
+                        {subToggle("Alert Sounds", &BwConfig::areSoundsEnabled,
+                                   &BwConfig::setSoundsEnabled),
+                         subToggle("Debug Diagnostics", &BwConfig::isDebugEnabled,
+                                   &BwConfig::setDebugEnabled),
+                         subToggle("Arm Settings Reset", [] { return false; },
+                                   [](bool enabled) {
+                                     if (!enabled) return;
+                                     const ULONGLONG now = GetTickCount64();
+                                     if (s_bedwarsResetArmedAt != 0 &&
+                                         now - s_bedwarsResetArmedAt < 8000) {
+                                       BwConfig::save(BwConfig::Settings{});
+                                       s_bedwarsResetArmedAt = 0;
+                                     } else {
+                                       s_bedwarsResetArmedAt = now;
+                                     }
+                                   }),
+                         subDynamicLabel("Reset confirmation", [] {
+                           const ULONGLONG now = GetTickCount64();
+                           return s_bedwarsResetArmedAt != 0 &&
+                                          now - s_bedwarsResetArmedAt < 8000
+                                      ? std::string("Click reset again within 8 seconds")
+                                      : std::string("Reset requires two clicks within 8 seconds");
+                         })}});
+
+      w.mods.push_back({
+          "Player Alert Settings", [] {
+            return BwConfig::isMasterEnabled();
+          }, [](bool) {},
+          {subChoice(
+               "Visibility Mode", {"Range Only", "Line of Sight", "Camera View"},
+               []() -> const char * {
+                 switch (BwConfig::getVisibilityMode()) {
+                 case VisibilityMode::RangeOnly: return "Range Only";
+                 case VisibilityMode::CameraView: return "Camera View";
+                 default: return "Line of Sight";
+                 }
+               },
+               [](const char *value) {
+                 if (strcmp(value, "Range Only") == 0)
+                   BwConfig::setVisibilityMode(VisibilityMode::RangeOnly);
+                 else if (strcmp(value, "Camera View") == 0)
+                   BwConfig::setVisibilityMode(VisibilityMode::CameraView);
+                 else
+                   BwConfig::setVisibilityMode(VisibilityMode::LineOfSight);
+               }),
+           subSlider("Player Range", &BwConfig::getPlayerAlertRange,
+                     &BwConfig::setPlayerAlertRange, 4.0f, 256.0f, "m"),
+           subSlider("Camera Region", &BwConfig::getCameraViewDegrees,
+                     &BwConfig::setCameraViewDegrees, 30.0f, 170.0f, " deg"),
+           subSlider(
+               "Player Cooldown",
+               [] { return (float)BwConfig::getPlayerAlertCooldownMs(); },
+               [](float value) {
+                 BwConfig::setPlayerAlertCooldownMs((int)(value + 0.5f));
+               },
+               250.0f, 60000.0f, "ms")}});
+
+      w.mods.push_back({
+          "Notification Settings", &BwConfig::areSoundsEnabled,
+          &BwConfig::setSoundsEnabled,
+          {subSlider("Default Duration", &BwConfig::getDefaultNotificationSeconds,
+                     &BwConfig::setDefaultNotificationSeconds, 1.0f, 15.0f, "s"),
+           subSlider("Team Upgrade Duration",
+                     &BwConfig::getImportantNotificationSeconds,
+                     &BwConfig::setImportantNotificationSeconds, 1.0f, 15.0f,
+                     "s"),
+           subSlider("Player Item Duration",
+                     &BwConfig::getPlayerNotificationSeconds,
+                     &BwConfig::setPlayerNotificationSeconds, 1.0f, 15.0f,
+                     "s"),
+           subSlider("Warning Duration", &BwConfig::getWarningNotificationSeconds,
+                     &BwConfig::setWarningNotificationSeconds, 1.0f, 15.0f, "s"),
+           subSlider(
+               "Maximum Visible",
+               [] { return (float)BwConfig::getMaximumVisibleNotifications(); },
+               [](float value) {
+                 BwConfig::setMaximumVisibleNotifications((int)(value + 0.5f));
+               },
+               1.0f, 10.0f)}});
+
+      LbModule hudSettings{
+          "HUD and Layout",
+          [] { return Render::BedwarsOverlay::isLayoutMode(); },
+          [](bool enabled) { Render::BedwarsOverlay::setLayoutMode(enabled); },
+          {}};
+      for (std::size_t hudIndex = 0;
+           hudIndex < OVson::Bedwars::kHudCount; ++hudIndex) {
+        const HudId hud = static_cast<HudId>(hudIndex);
+        hudSettings.subs.push_back(subLabel(OVson::Bedwars::hudName(hud)));
+        hudSettings.subs.push_back(subToggle(
+            "Visible",
+            [hud] { return BwConfig::getHudLayout(hud).visible; },
+            [hud](bool enabled) {
+              HudLayout layout = BwConfig::getHudLayout(hud);
+              layout.visible = enabled;
+              BwConfig::setHudLayout(hud, layout);
+            }));
+        hudSettings.subs.push_back(subSlider(
+            "X", [hud] { return BwConfig::getHudLayout(hud).x; },
+            [hud](float value) {
+              HudLayout layout = BwConfig::getHudLayout(hud);
+              layout.x = value;
+              BwConfig::setHudLayout(hud, layout);
+            },
+            0.0f, 1.0f, "", true));
+        hudSettings.subs.push_back(subSlider(
+            "Y", [hud] { return BwConfig::getHudLayout(hud).y; },
+            [hud](float value) {
+              HudLayout layout = BwConfig::getHudLayout(hud);
+              layout.y = value;
+              BwConfig::setHudLayout(hud, layout);
+            },
+            0.0f, 1.0f, "", true));
+        hudSettings.subs.push_back(subSlider(
+            "Scale", [hud] { return BwConfig::getHudLayout(hud).scale; },
+            [hud](float value) {
+              HudLayout layout = BwConfig::getHudLayout(hud);
+              layout.scale = value;
+              BwConfig::setHudLayout(hud, layout);
+            },
+            0.5f, 2.5f));
+        hudSettings.subs.push_back(subToggle(
+            "Reset Position", [] { return false; },
+            [hud](bool enabled) {
+              if (enabled) BwConfig::resetHudLayout(hud);
+            }));
+      }
+      hudSettings.subs.push_back(subLabel("All HUDs"));
+      hudSettings.subs.push_back(subToggle(
+          "Reset All Positions", [] { return false; }, [](bool enabled) {
+            if (enabled) BwConfig::resetAllHudLayouts();
+          }));
+      w.mods.push_back(std::move(hudSettings));
+
+      w.mods.push_back({
+          "Map Height Override", [] {
+            return OVson::Bedwars::Runtime::instance().snapshot().maximumPlacementY >= 0;
+          }, [](bool) {},
+          {subSlider(
+               "Current Map Placement Y",
+               [] {
+                 const auto settings = BwConfig::get();
+                 const auto snapshot = OVson::Bedwars::Runtime::instance().snapshot();
+                 const auto resolved = OVson::Bedwars::resolveMapHeight(
+                     snapshot.mapName, settings.mapPlacementOverrides);
+                 return (float)resolved.maximumPlacementY.value_or(100);
+               },
+               [](float value) {
+                 const auto map =
+                     OVson::Bedwars::Runtime::instance().snapshot().mapName;
+                 if (!map.empty())
+                   BwConfig::setMapPlacementOverride(map,
+                                                     (int)(value + 0.5f));
+               },
+               1.0f, 511.0f),
+           subToggle("Reset Current Map Override", [] { return false; },
+                     [](bool enabled) {
+                       if (!enabled) return;
+                       const auto map =
+                           OVson::Bedwars::Runtime::instance().snapshot().mapName;
+                       if (!map.empty()) BwConfig::resetMapPlacementOverride(map);
+                     })}});
+
+      for (std::size_t i = 0; i < OVson::Bedwars::kModuleCount; ++i) {
+        const Module module = static_cast<Module>(i);
+        LbModule item;
+        item.name = OVson::Bedwars::moduleName(module);
+        item.get = [module] {
+          const bool hookAvailable =
+              module != Module::AntiMisplace ||
+              OVson::Bedwars::Runtime::instance().inputHookAvailable();
+          return OVson::Bedwars::isModuleAvailable(module) && hookAvailable &&
+                 BwConfig::isMasterEnabled() &&
+                 BwConfig::isModuleEnabled(module);
+        };
+        item.savedGet = [module] { return BwConfig::isModuleEnabled(module); };
+        item.set = [module](bool enabled) {
+          const bool hookAvailable =
+              module != Module::AntiMisplace ||
+              OVson::Bedwars::Runtime::instance().inputHookAvailable();
+          if (OVson::Bedwars::isModuleAvailable(module) && hookAvailable)
+            BwConfig::setModuleEnabled(module, enabled);
+        };
+        if (!OVson::Bedwars::isModuleAvailable(module)) {
+          item.subs.push_back(subLabel("Unavailable: missing safe hook"));
+        } else if (module == Module::AntiMisplace) {
+          item.subs.push_back(subDynamicLabel(
+              "Anti Misplace status", [] {
+                const auto snapshot =
+                    OVson::Bedwars::Runtime::instance().snapshot();
+                return std::string("Status: ") + snapshot.antiMisplaceStatus;
+              }));
+          item.subs.push_back(subDynamicLabel(
+              "Anti Misplace details", [] {
+                return OVson::Bedwars::Runtime::instance()
+                    .snapshot()
+                    .antiMisplaceDetails;
+              }));
+        } else if (module == Module::EventTimers) {
+          item.subs.push_back(subToggle("Only Next Event",
+                                        &BwConfig::isOnlyNextEvent,
+                                        &BwConfig::setOnlyNextEvent));
+          item.subs.push_back(subToggle("Dynamic Color",
+                                        &BwConfig::isDynamicTimerColor,
+                                        &BwConfig::setDynamicTimerColor));
+          item.subs.push_back(subSlider("HUD X", &BwConfig::getTimerX,
+                                        &BwConfig::setTimerX, 0.0f, 1.0f, "",
+                                        true));
+          item.subs.push_back(subSlider("HUD Y", &BwConfig::getTimerY,
+                                        &BwConfig::setTimerY, 0.0f, 1.0f, "",
+                                        true));
+          item.subs.push_back(subSlider("Scale", &BwConfig::getTimerScale,
+                                        &BwConfig::setTimerScale, 0.5f, 2.5f));
+        } else if (module == Module::BedTracker) {
+          item.subs.push_back(subSlider("Warning Range",
+                                        &BwConfig::getBedWarningRange,
+                                        &BwConfig::setBedWarningRange, 5.0f,
+                                        128.0f, "m"));
+          item.subs.push_back(subSlider("Maximum Range",
+                                        &BwConfig::getBedMaximumRange,
+                                        &BwConfig::setBedMaximumRange, 16.0f,
+                                        160.0f, "m"));
+          item.subs.push_back(subSlider(
+              "Scan Interval",
+              [] { return BwConfig::getBedScanIntervalMs() / 1000.0f; },
+              [](float value) {
+                BwConfig::setBedScanIntervalMs((int)(value * 1000.0f + 0.5f));
+              },
+              5.0f, 30.0f, "s"));
+        } else if (module == Module::HeightOverlay) {
+          item.subs.push_back(subToggle("Dynamic Color",
+                                        &BwConfig::isDynamicHeightColor,
+                                        &BwConfig::setDynamicHeightColor));
+          item.subs.push_back(subSlider("HUD X", &BwConfig::getHeightX,
+                                        &BwConfig::setHeightX, 0.0f, 1.0f, "",
+                                        true));
+          item.subs.push_back(subSlider("HUD Y", &BwConfig::getHeightY,
+                                        &BwConfig::setHeightY, 0.0f, 1.0f, "",
+                                        true));
+          item.subs.push_back(subSlider("Scale", &BwConfig::getHeightScale,
+                                        &BwConfig::setHeightScale, 0.5f, 2.5f));
+          item.subs.push_back(subSlider(
+              "Limit Override",
+              [] { return (float)BwConfig::getHeightLimitOverride(); },
+              [](float value) {
+                BwConfig::setHeightLimitOverride((int)(value + 0.5f));
+              },
+              0.0f, 256.0f));
+        } else if (module == Module::TrapNotifier) {
+          item.subs.push_back(subSlider(
+              "Reminder Interval",
+              [] { return (float)BwConfig::getTrapReminderSeconds(); },
+              [](float value) {
+                BwConfig::setTrapReminderSeconds((int)(value + 0.5f));
+              },
+              15.0f, 600.0f, "s"));
+        } else if (module == Module::ResourceTracker) {
+          item.subs.push_back(subToggle("Resource HUD",
+                                        &BwConfig::isResourceHudEnabled,
+                                        &BwConfig::setResourceHudEnabled));
+          item.subs.push_back(subToggle("Separate Alerts",
+                                        &BwConfig::isStackedResourceAlerts,
+                                        &BwConfig::setStackedResourceAlerts));
+          for (std::size_t resourceIndex = 0;
+               resourceIndex < OVson::Bedwars::kResourceCount;
+               ++resourceIndex) {
+            const auto resource =
+                static_cast<OVson::Bedwars::Resource>(resourceIndex);
+            item.subs.push_back(subToggle(
+                OVson::Bedwars::resourceName(resource),
+                [resource] { return BwConfig::isResourceEnabled(resource); },
+                [resource](bool enabled) {
+                  BwConfig::setResourceEnabled(resource, enabled);
+                }));
+          }
+        } else if (module == Module::UpgradeHud) {
+          item.subs.push_back(subToggle("Short Labels",
+                                        &BwConfig::isShortUpgradeLabels,
+                                        &BwConfig::setShortUpgradeLabels));
+        }
+        w.mods.push_back(std::move(item));
+      }
       s_lbWins.push_back(std::move(w));
     }
     {
@@ -864,8 +1181,10 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
         g_guiFont.drawString(win.x + 16, ry + rowH * 0.5f - 6.5f, m.name,
                              applyAlpha(on ? textPrimary() : textSecondary(),
                                         s_animAlpha), 0.5f);
-        if (clickEvent && isHit && hov && s_dragWin < 0)
-          m.set(!on);
+        if (clickEvent && isHit && hov && s_dragWin < 0) {
+          const bool toggleValue = m.savedGet ? m.savedGet() : on;
+          m.set(!toggleValue);
+        }
         if (rClickEvent && isHit && hov && hasSubs)
           m.expanded = !m.expanded;
         ry += rowH;
@@ -904,42 +1223,45 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
             continue;
           }
 
-          float sh = lbSubH(sb);
+          float subHeight = lbSubH(sb);
           int sid = 9000 + (int)(unsigned char)win.title[0] * 97 +
                     (int)mi * 17 + (int)si;
 
           if (sb.kind == LbKind::Label) {
-            bool lhov = inVisibleArea && isHovered(mx, my, win.x + 10, ry, ww - 20, sh) && isHit;
+            const std::string dynamicLabel =
+                sb.labelGet ? sb.labelGet() : std::string(sb.name);
+            bool lhov = inVisibleArea && isHovered(mx, my, win.x + 10, ry, ww - 20, subHeight) && isHit;
             glEnable(GL_TEXTURE_2D);
             DWORD labelColor = lhov ? accent() : textMuted();
-            g_guiFont.drawString(lx, ry + sh - 13.0f, sb.name,
+            g_guiFont.drawString(lx, ry + subHeight - 13.0f,
+                                 dynamicLabel,
                                  applyAlpha(labelColor, 0.85f * s_animAlpha),
                                  0.4f);
 
-            drawChevron(rx - 10.0f, ry + sh * 0.5f - 1.0f, 3.5f, sb.open, labelColor, s_animAlpha);
+            drawChevron(rx - 10.0f, ry + subHeight * 0.5f - 1.0f, 3.5f, sb.open, labelColor, s_animAlpha);
             glDisable(GL_TEXTURE_2D);
 
             if ((clickEvent || rClickEvent) && isHit && lhov && s_dragWin < 0) {
               sb.open = !sb.open;
             }
 
-            ry += sh;
+            ry += subHeight;
             continue;
           }
 
           if (sb.kind == LbKind::Toggle) {
             bool son = sb.bget();
-            bool shov = inVisibleArea && isHovered(mx, my, win.x + 10, ry, ww - 20, sh) && isHit;
+            bool shov = inVisibleArea && isHovered(mx, my, win.x + 10, ry, ww - 20, subHeight) && isHit;
             glDisable(GL_TEXTURE_2D);
             if (shov) {
               DWORD hb = surface2();
-              RenderUtils::drawRoundedRect(win.x + 10, ry + 2, ww - 20, sh - 4,
+              RenderUtils::drawRoundedRect(win.x + 10, ry + 2, ww - 20, subHeight - 4,
                                            5.0f, hb,
                                            (((hb >> 24) & 0xFF) / 255.0f) *
                                                0.55f * A);
             }
 
-            float sdx = rx - 5.0f, sdy = ry + sh * 0.5f;
+            float sdx = rx - 5.0f, sdy = ry + subHeight * 0.5f;
             if (son) {
               RenderUtils::drawCircle(sdx, sdy, 3.0f, accent(), subFade);
             } else {
@@ -947,13 +1269,13 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
             }
 
             glEnable(GL_TEXTURE_2D);
-            g_guiFont.drawString(lx, ry + sh * 0.5f - 6.0f, sb.name,
+            g_guiFont.drawString(lx, ry + subHeight * 0.5f - 6.0f, sb.name,
                                  applyAlpha(son ? textPrimary() : textSecondary(),
                                             subFade), 0.45f);
             glDisable(GL_TEXTURE_2D);
             if (clickEvent && isHit && shov && s_dragWin < 0)
               sb.bset(!son);
-            ry += sh;
+            ry += subHeight;
             continue;
           }
 
@@ -976,7 +1298,7 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
                                   sb.fmin, sb.fmax, mx, my,
                                   lClick && isHit && inVisibleArea, subFade);
             if (sch) sb.fset(sval);
-            ry += sh;
+            ry += subHeight;
             continue;
           }
 
@@ -1031,7 +1353,7 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
                 }
               }
             }
-            ry += sh;
+            ry += subHeight;
             continue;
           }
 
@@ -1087,7 +1409,7 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
               }
             }
 
-            ry += sh;
+            ry += subHeight;
             continue;
           }
         }
@@ -1432,8 +1754,9 @@ void ClickGUI::render(HDC hdc) {
 
   {
     static const char *tabNm[] = {"Visuals", "Players", "Tags", "Settings",
-                                  "Colors", "Debug", "Utils", "Plugins"};
-    int ti = (s_targetTab >= 0 && s_targetTab < 8) ? s_targetTab : 0;
+                                  "Colors", "Debug", "Utils", "Plugins",
+                                  "Bedwars"};
+    int ti = (s_targetTab >= 0 && s_targetTab < 9) ? s_targetTab : 0;
     float hbX = mainX + sidebarW + 30.0f, hbY = mainY + 22.0f;
     // getStringWidth() is measured at scale 0.5, so visual width of
     // drawString(text, S) == getStringWidth(text) * (S / 0.5).
@@ -1485,9 +1808,6 @@ void ClickGUI::render(HDC hdc) {
     }
     glEnable(GL_TEXTURE_2D);
 
-    const char *glyph = "X";
-    float glyphW = g_guiFont.getStringWidth(glyph);
-    
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_LINE_SMOOTH);
@@ -1545,7 +1865,8 @@ void ClickGUI::render(HDC hdc) {
   s_scrollOffset += (s_targetScroll - s_scrollOffset) * 0.18f;
 
   const char *tabs[] = {"Visuals", "Players", "Tags",  "Settings",
-                        "Colors",  "Debug",   "Utils", "Plugins", nullptr};
+                        "Colors",  "Debug",   "Utils", "Plugins",
+                        "Bedwars", nullptr};
   float ty = mainY + tabStartY;
   for (int i = 0; tabs[i]; ++i) {
     bool hover = isHovered(mx, my, mainX + 12, ty - 10, sidebarW - 24, 42);
@@ -1686,6 +2007,7 @@ void ClickGUI::render(HDC hdc) {
   case 5: Tabs::renderDebug   (ctx); break;
   case 6: Tabs::renderUtils   (ctx); break;
   case 7: Tabs::renderPlugins (ctx); break;
+  case 8: Tabs::renderBedwars (ctx); break;
   default: break;
   }
 

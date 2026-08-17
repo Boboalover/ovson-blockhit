@@ -15,6 +15,9 @@
 #include "BetterTab.h"
 #include "../ClickGUI/ClickGUI.h"
 #include "DefenseRenderer.h"
+#include "BedwarsOverlay.h"
+#include "../Logic/Bedwars/BedwarsRuntime.h"
+#include "../JavaHook/BedwarsPlacementHook.h"
 #include "NameTagRenderer.h"
 #include "NotificationManager.h"
 #include "StatsOverlay.h"
@@ -797,6 +800,20 @@ static void renderOverlayWorkBody(HDC hdc) {
     }
   }
 
+  runSubsystem("BedwarsRuntime::tick", []() {
+    OVson::Bedwars::Runtime::instance().tick();
+  });
+
+  runSubsystem("BedwarsPlacementHook::update", []() {
+    BedwarsPlacementHook::update();
+  });
+
+  runSubsystem("BedwarsOverlay::render", [hdc]() {
+    GLint vp[4];
+    glGetIntegerv(GL_VIEWPORT, vp);
+    Render::BedwarsOverlay::render(hdc, vp[2], vp[3]);
+  });
+
   runSubsystem("ClickGUI::render", [hdc]() {
     if (Render::ClickGUI::isOpen()) {
       FocusFix::setIngameFocus(false);
@@ -987,6 +1004,7 @@ void RenderHook::uninstall() {
 
   StatsOverlay::shutdown();
   Render::TechOverlay::shutdown();
+  Render::BedwarsOverlay::shutdown();
 }
 
 void RenderHook::poll() {

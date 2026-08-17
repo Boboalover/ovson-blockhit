@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include <mutex>
 #include <atomic>
+#include <thread>
 
 namespace BedDefense
 {
@@ -27,14 +28,21 @@ namespace BedDefense
     struct DetectedBed
     {
         int x, y, z;
+        int secondX, secondY, secondZ;
         std::string teamColor;
+        bool teamAssignmentConfident;
+        bool twoBlockStructure;
         std::vector<DefenseLayer> layers;
         bool dirty;
         ULONGLONG lastScan;
 
-        DetectedBed() : x(0), y(0), z(0), dirty(true), lastScan(0) {}
+        DetectedBed() : x(0), y(0), z(0), secondX(0), secondY(0), secondZ(0),
+            teamAssignmentConfident(false), twoBlockStructure(false),
+            dirty(true), lastScan(0) {}
         DetectedBed(int px, int py, int pz, const std::string& team)
-            : x(px), y(py), z(pz), teamColor(team), dirty(true), lastScan(0) {}
+            : x(px), y(py), z(pz), secondX(px), secondY(py), secondZ(pz),
+              teamColor(team), teamAssignmentConfident(team != "UNKNOWN"),
+              twoBlockStructure(false), dirty(true), lastScan(0) {}
 
         std::string getKey() const {
             return std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(z);
@@ -54,11 +62,15 @@ namespace BedDefense
         static BedDefenseManager* s_instance;
         
         std::unordered_map<std::string, DetectedBed> m_beds;
-        bool m_enabled;
-        ULONGLONG m_lastRevalidation;
-        
+        std::atomic<bool> m_enabled;
+        std::atomic<ULONGLONG> m_lastFullScan;
+
         std::mutex m_bedMutex;
+        std::mutex m_scanThreadMutex;
         std::atomic<bool> m_isScanning;
+        std::atomic<bool> m_cancelScan;
+        std::atomic<std::uint64_t> m_scanGeneration;
+        std::thread m_scanThread;
 
         BedDefenseManager();
         ~BedDefenseManager();
@@ -75,7 +87,8 @@ namespace BedDefense
         
         void scanChunkInto(int chunkX, int chunkZ, std::unordered_map<std::string, DetectedBed>& targetMap);
 
-        void asyncScanTask();
+        void asyncScanTask(std::uint64_t scanGeneration);
+        void cancelScanAndJoin();
 
     public:
         static BedDefenseManager* getInstance();
@@ -86,7 +99,7 @@ namespace BedDefense
         int getBlockMetadata(int x, int y, int z);
         void enable();
         void disable();
-        bool isEnabled() const { return m_enabled; }
+        bool isEnabled() const { return m_enabled.load(); }
         void detectBed(int x, int y, int z);
         void removeBed(int x, int y, int z);
         void markBedDirty(int x, int y, int z, int radius = 5);
