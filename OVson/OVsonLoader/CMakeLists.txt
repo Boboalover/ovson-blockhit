@@ -15,9 +15,10 @@ list(APPEND CMAKE_PREFIX_PATH "${SLINT_INSTALL_ROOT}")
 find_package(Slint 1.16.1 CONFIG QUIET)
 if(NOT Slint_FOUND)
     message(FATAL_ERROR
-        "OVsonLoader requires Slint C++ 1.16.1. Install it under "
-        "'${SLINT_INSTALL_ROOT}', set SLINT_INSTALL_ROOT to its prefix, or "
-        "configure with -DOVSON_BUILD_LOADER=OFF for DLL/tests-only work.")
+        "OVsonLoader requires Slint C++ 1.16.1. Set Slint_DIR to the directory "
+        "containing SlintConfig.cmake, set SLINT_INSTALL_ROOT to the Slint "
+        "installation root, or configure with -DOVSON_BUILD_LOADER=OFF to "
+        "build only the OVson DLL and deterministic tests.")
 endif()
 
 # Everything UI-related lives in slint_ui/. The old UI/, Injection/

@@ -8,6 +8,7 @@
 namespace Config {
 bool initialize(HMODULE selfModule);
 HMODULE getModuleHandle();
+std::string getDataDirectory();
 void update();
 bool save();
 bool saveNow();
@@ -83,6 +84,20 @@ void setNickedBypass(bool enabled);
 
 bool isRawMouseFixEnabled();
 void setRawMouseFixEnabled(bool enabled);
+
+// Client-side heuristic: correlates server hurt/health/velocity packets with a
+// nearby player swing while the local player is sword-blocking. It is not a
+// server-confirmed block result.
+bool isBlockHitSoundEnabled();
+void setBlockHitSoundEnabled(bool enabled);
+bool isBlockHitSoundDebugEnabled();
+void setBlockHitSoundDebugEnabled(bool enabled);
+const std::string &getBlockHitSoundSource();
+void setBlockHitSoundSource(const std::string &source);
+const std::string &getBlockHitSoundFilename();
+void setBlockHitSoundFilename(const std::string &filename);
+float getBlockHitSoundVolume();
+void setBlockHitSoundVolume(float volumePercent);
 
 // click gui settings
 int getClickGuiKey();

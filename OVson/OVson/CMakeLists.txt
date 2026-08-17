@@ -5,12 +5,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(PROJECT_IS_TOP_LEVEL)
-    option(OVSON_BUILD_TESTS "Build OVson deterministic tests" ON)
+    option(OVSON_BUILD_TESTS "Build OVson's deterministic tests" ON)
     if(OVSON_BUILD_TESTS)
         include(CTest)
     endif()
 endif()
 
+# Definitions
 add_definitions(-DWIN32 -D_WINDOWS -D_USRDLL -D_WINDLL -DOVSON_EXPORTS -D_CRT_SECURE_NO_WARNINGS)
 
 if(MSVC)
@@ -41,6 +42,10 @@ set(OVSON_SOURCES
     Logic/Bedwars/BedwarsCore.cpp
     Logic/Bedwars/BedwarsMaps.cpp
     Logic/Bedwars/BedwarsRuntime.cpp
+    Logic/BlockHitAudio.cpp
+    Logic/BlockHitAudioBackend.cpp
+    Logic/BlockHitHeuristic.cpp
+    Logic/BlockHitSound.cpp
     Chat/ChatAPI_Bridge.cpp
     Chat/ChatHook.cpp
     Chat/ChatSDK.cpp
@@ -112,6 +117,9 @@ set(OVSON_HEADERS
     Logic/Bedwars/BedwarsConfig.h
     Logic/Bedwars/BedwarsCore.h
     Logic/Bedwars/BedwarsRuntime.h
+    Logic/BlockHitHeuristic.h
+    Logic/BlockHitAudio.h
+    Logic/BlockHitAudioBackend.h
     Chat/ChatHook.h
     Chat/ChatSDK.h
     Chat/Commands.h
@@ -150,6 +158,10 @@ set(OVSON_HEADERS
     Logic/BedDefense/BedDefenseManager.h
     Logic/BedDefense/BlockHook.h
     Logic/AutoGG.h
+    Logic/PacketHook.h
+    Logic/BlockHitSound.h
+    Logic/PacketFilterHook_bytes.h
+    Logic/PacketFilterHook.java
     Utils/ChatBypasser.h
     Utils/CrashDump.h
     Utils/NumberDenicker.h
@@ -182,6 +194,9 @@ if(MSVC)
         Logic/Bedwars/BedwarsCore.cpp
         Logic/Bedwars/BedwarsMaps.cpp
         Logic/Bedwars/BedwarsRuntime.cpp
+        Logic/BlockHitAudio.cpp
+        Logic/BlockHitAudioBackend.cpp
+        Logic/BlockHitSound.cpp
         Render/DefenseRenderer.cpp
         Render/NotificationManager.cpp
         Render/RenderHook.cpp
@@ -192,6 +207,8 @@ if(MSVC)
     )
 endif()
 
+# The DLL embeds the plugin API. Build it in the binary tree so a clean
+# checkout does not require a pre-generated JAR in the source directory.
 find_package(Java COMPONENTS Development QUIET)
 if(NOT Java_FOUND)
     message(FATAL_ERROR
@@ -252,6 +269,7 @@ add_custom_command(
 )
 add_custom_target(OVsonAPIJar DEPENDS "${OVSON_API_JAR}")
 
+# Create the DLL target
 add_library(OVson SHARED ${OVSON_SOURCES} ${OVSON_HEADERS})
 add_dependencies(OVson OVsonAPIJar)
 set_property(SOURCE Resource.rc APPEND PROPERTY COMPILE_DEFINITIONS
@@ -274,6 +292,8 @@ target_link_libraries(OVson PRIVATE
     Advapi32.lib
     Shell32.lib
     Dbghelp.lib
+    Dsound.lib
+    Dxguid.lib
 )
 
 set_target_properties(OVson PROPERTIES
@@ -298,4 +318,32 @@ if(OVSON_BUILD_TESTS AND BUILD_TESTING)
         target_compile_options(OVsonBedwarsTests PRIVATE /W4)
     endif()
     add_test(NAME OVson.Bedwars COMMAND OVsonBedwarsTests)
+
+    add_executable(OVsonBlockHitHeuristicTests
+        Logic/BlockHitHeuristic.cpp
+        Logic/BlockHitHeuristic.h
+        tests/BlockHitHeuristicTests.cpp
+    )
+    target_include_directories(OVsonBlockHitHeuristicTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    if(MSVC)
+        target_compile_options(OVsonBlockHitHeuristicTests PRIVATE /W4)
+    endif()
+    add_test(NAME OVson.BlockHitHeuristic
+             COMMAND OVsonBlockHitHeuristicTests)
+
+    add_executable(OVsonBlockHitAudioTests
+        Logic/BlockHitAudio.cpp
+        Logic/BlockHitAudio.h
+        tests/BlockHitAudioTests.cpp
+    )
+    target_include_directories(OVsonBlockHitAudioTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    if(MSVC)
+        target_compile_options(OVsonBlockHitAudioTests PRIVATE /W4)
+    endif()
+    add_test(NAME OVson.BlockHitAudio
+             COMMAND OVsonBlockHitAudioTests)
 endif()

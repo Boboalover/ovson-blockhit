@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(OVSON_BUILD_LOADER "Build the Slint-based OVson loader" ON)
-option(OVSON_BUILD_TESTS "Build OVson deterministic tests" ON)
+option(OVSON_BUILD_TESTS "Build OVson's deterministic tests" ON)
 
 if(OVSON_BUILD_TESTS)
     include(CTest)

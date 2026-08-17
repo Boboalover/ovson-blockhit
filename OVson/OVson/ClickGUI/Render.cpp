@@ -17,6 +17,7 @@
 #include "../Logic/Bedwars/BedwarsCore.h"
 #include "../Logic/Bedwars/BedwarsRuntime.h"
 #include "../Render/BedwarsOverlay.h"
+#include "../Logic/BlockHitSound.h"
 #include "../Config/Config.h"
 #include "../Utils/GlGuard.h"
 #include "../Utils/SensitivityFix.h"
@@ -242,7 +243,7 @@ static void drawCaret(float cx, float cy, float s, bool open, uint32_t col, floa
   glEnable(GL_TEXTURE_2D);
 }
 
-enum class LbKind { Toggle, Slider, Choice, Label, Input };
+enum class LbKind { Toggle, Slider, Choice, Label, Input, Action };
 struct LbSub {
   const char *name;
   LbKind kind = LbKind::Toggle;
@@ -262,6 +263,7 @@ struct LbSub {
   std::function<std::string()> sget;
   std::function<void(const std::string &)> sset;
   std::function<std::string()> labelGet;
+  std::function<void()> action;
   bool isPassword = false;
 };
 struct LbModule {
@@ -346,6 +348,22 @@ static LbSub subInput(const char *n, bool *typingState, std::string *buf,
   sb.sset = s;
   sb.isPassword = isPwd;
   return sb;
+}
+static LbSub subAction(const char *n, std::function<void()> action,
+                       std::function<std::string()> value = {}) {
+  LbSub sb;
+  sb.name = n;
+  sb.kind = LbKind::Action;
+  sb.action = std::move(action);
+  sb.sget = std::move(value);
+  return sb;
+}
+
+static std::string shortBlockHitFilename() {
+  const std::string &filename = Config::getBlockHitSoundFilename();
+  constexpr std::size_t kMaximumDisplayLength = 20U;
+  if (filename.size() <= kMaximumDisplayLength) return filename;
+  return filename.substr(0U, kMaximumDisplayLength - 3U) + "...";
 }
 
 static const float kDdOptH = 26.0f;  // dropdown option row height
@@ -506,6 +524,30 @@ static void ensureLbWindows() {
                           auto *bd = BedDefense::BedDefenseManager::getInstance();
                           if (b) bd->enable(); else bd->disable();
                         }, {}});
+      w.mods.push_back(
+          {"Block-Hit Sound (Client Heuristic)", &Config::isBlockHitSoundEnabled,
+           &Config::setBlockHitSoundEnabled,
+           {subChoice("Sound Source", {"Default", "Custom"},
+                      [] { return Config::getBlockHitSoundSource().c_str(); },
+                      [](const char *value) {
+                        Config::setBlockHitSoundSource(value);
+                      }),
+            subSlider("Volume", &Config::getBlockHitSoundVolume,
+                      &Config::setBlockHitSoundVolume, 0.0f, 100.0f, "%"),
+            subAction("Next WAV", &BlockHitSound::requestSelectNextCustomSound,
+                      &shortBlockHitFilename),
+            subAction("Reload WAV", &BlockHitSound::requestCustomSoundReload),
+            subAction("Preview", &BlockHitSound::requestPreview),
+            subAction("Open sounds folder", [] {
+              if (!BlockHitSound::openSoundsDirectory()) {
+                NotificationManager::getInstance()->add(
+                    "Block-Hit Sound", "Could not open the sounds folder",
+                    NotificationType::Warning);
+              }
+            }),
+            subToggle("Debug trigger/rejection reasons",
+                      &Config::isBlockHitSoundDebugEnabled,
+                      &Config::setBlockHitSoundDebugEnabled)}});
       w.mods.push_back({"Anticheat", &Config::isAnticheatEnabled,
                         &Config::setAnticheatEnabled,
                         {subToggle("NoSlow", &Config::isAnticheatNoSlowEnabled,
@@ -1042,7 +1084,6 @@ static void ensureLbWindows() {
 static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
                           bool rClickEvent, float sw, float sh) {
   using namespace ClickGUITheme;
-  (void)sw; (void)sh;
   ensureLbWindows();
 
   static int s_dragWin = -1;
@@ -1357,6 +1398,38 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
             continue;
           }
 
+          if (sb.kind == LbKind::Action) {
+            const bool shov = inVisibleArea &&
+                              isHovered(mx, my, win.x + 10, ry, ww - 20, sh) &&
+                              isHit;
+            glDisable(GL_TEXTURE_2D);
+            if (shov) {
+              DWORD hb = surface2();
+              RenderUtils::drawRoundedRect(
+                  win.x + 10, ry + 2, ww - 20, sh - 4, 5.0f, hb,
+                  (((hb >> 24) & 0xFF) / 255.0f) * 0.7f * A);
+            }
+            glEnable(GL_TEXTURE_2D);
+            g_guiFont.drawString(lx, ry + sh * 0.5f - 6.0f, sb.name,
+                                 applyAlpha(shov ? textPrimary()
+                                                 : textSecondary(),
+                                            subFade),
+                                 0.44f);
+            if (sb.sget) {
+              const std::string value = sb.sget();
+              const float valueWidth =
+                  g_guiFont.getStringWidth(value) * (0.38f / 0.5f);
+              g_guiFont.drawString(rx - valueWidth, ry + sh * 0.5f - 5.0f,
+                                   value.c_str(), applyAlpha(accent(), subFade),
+                                   0.38f);
+            }
+            glDisable(GL_TEXTURE_2D);
+            if (clickEvent && shov && s_dragWin < 0 && sb.action)
+              sb.action();
+            ry += sh;
+            continue;
+          }
+
           if (sb.kind == LbKind::Input) {
             bool typing = sb.typingStatePtr ? *(sb.typingStatePtr) : false;
             std::string &buf = *(sb.inputBufPtr);
@@ -1499,6 +1572,7 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
     }
     glEnable(GL_TEXTURE_2D);
   }
+
 }
 
 void ClickGUI::handleScrollB(float mx, float my, int delta) {
