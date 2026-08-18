@@ -1089,6 +1089,8 @@ void RenderHook::uninstall() {
 
 bool RenderHook::mustStayLoaded() { return g_mustStayLoaded.load(); }
 
+void *RenderHook::gameWindowHandle() { return (void *)g_gameHwnd; }
+
 void RenderHook::poll() {
   if (g_suppressVanillaTab.load()) suppressVanillaTab();
 }

@@ -271,10 +271,10 @@ void detectLocalTeamFromArmor(JNIEnv *env, jobject localPlayer) {
       "func_71124_b", "q", "(I)Lzx;");
   jmethodID getItem = lc->GetMethodID(stackClass, "getItem",
                                       "()Lnet/minecraft/item/Item;",
-                                      "func_77973_b", "b");
+                                      "func_77973_b", "b", "()Lzw;");
   jmethodID getColor = lc->GetMethodID(
       armorClass, "getColor", "(Lnet/minecraft/item/ItemStack;)I",
-      "func_82814_b", "b");
+      "func_82814_b", "b", "(Lzx;)I");
   if (!getArmor || !getItem || !getColor)
     return;
   // getCurrentArmor's slot order is boots=0, leggings=1, chestplate=2,
@@ -319,9 +319,7 @@ std::vector<PlayerObservation> scanPlayers(JNIEnv *env, jobject world,
   jclass worldClass = lc->GetClass("net.minecraft.world.World");
   jclass entityClass = lc->GetClass("net.minecraft.entity.Entity");
   jclass playerClass = lc->GetClass("net.minecraft.entity.player.EntityPlayer");
-  jclass otherPlayerClass =
-      lc->GetClass("net.minecraft.client.entity.EntityOtherPlayerMP");
-  if (!worldClass || !entityClass || !playerClass || !otherPlayerClass)
+  if (!worldClass || !entityClass || !playerClass)
     return result;
   jfieldID playersField = lc->GetFieldID(worldClass, "playerEntities",
                                          "Ljava/util/List;", "field_73010_i",
@@ -365,8 +363,37 @@ std::vector<PlayerObservation> scanPlayers(JNIEnv *env, jobject world,
       "func_70694_bm", "bA", "()Lzx;");
   jmethodID isUsing = lc->GetMethodID(playerClass, "isUsingItem", "()Z",
                                       "func_71039_bw", "bS");
+  // Looked up on EntityPlayer rather than EntityOtherPlayerMP. isSpectator is
+  // declared on EntityPlayer, and JNI's GetMethodID already searches
+  // superclasses, so the subclass bought nothing -- while costing a class
+  // lookup that has no obfuscated-name fallback. On a client that ships
+  // obfuscated Minecraft classes that lookup returned null and the guard
+  // above aborted the whole player scan, which silently disabled every
+  // Bedwars player alert.
   jmethodID isSpectator = lc->GetMethodID(
-      otherPlayerClass, "isSpectator", "()Z", "func_175149_v", "v");
+      playerClass, "isSpectator", "()Z", "func_175149_v", "v");
+
+  // One-shot report of what the client's class layout actually gave us.
+  // Every lookup here has a deobfuscated name, an SRG name and an obfuscated
+  // fallback, and which of the three lands depends entirely on how the client
+  // ships Minecraft. When a client remaps something none of the three cover,
+  // the feature does not fail loudly -- it just silently reads nothing -- so
+  // this line is the difference between "unsupported client" and a guess.
+  {
+    static bool s_reported = false;
+    if (!s_reported) {
+      s_reported = true;
+      Logger::info("[Bedwars] JNI mapping: world=%d entity=%d player=%d "
+                   "players=%d pos=%d id=%d name=%d alive=%d canSee=%d "
+                   "held=%d using=%d spectator=%d",
+                   worldClass ? 1 : 0, entityClass ? 1 : 0, playerClass ? 1 : 0,
+                   playersField ? 1 : 0, (posX && posY && posZ) ? 1 : 0,
+                   getId ? 1 : 0, getName ? 1 : 0, isAlive ? 1 : 0,
+                   canSee ? 1 : 0, getHeld ? 1 : 0, isUsing ? 1 : 0,
+                   isSpectator ? 1 : 0);
+    }
+  }
+
   jclass stackClass = lc->GetClass("net.minecraft.item.ItemStack");
   jmethodID hasEffect = stackClass
                             ? lc->GetMethodID(stackClass, "hasEffect", "()Z",
@@ -468,8 +495,12 @@ std::vector<PlayerObservation> scanPlayers(JNIEnv *env, jobject world,
     }
     observation.alive = !isAlive || env->CallBooleanMethod(player, isAlive);
     clearException(env);
+    // The IsInstanceOf test against EntityOtherPlayerMP is gone: every entry
+    // in world.playerEntities is already a player, and the local player is
+    // rejected by identity further along, so the check only narrowed a set
+    // that was correct without it.
     observation.spectator =
-        env->IsInstanceOf(player, otherPlayerClass) &&
+        isSpectator &&
         env->CallBooleanMethod(player, isSpectator) == JNI_TRUE;
     clearException(env);
     bool armorEnchanted = false;
@@ -689,7 +720,13 @@ void Runtime::tick() {
   bool playerStateValid = false;
   if (player) {
     jclass entityClass = lc->GetClass("net.minecraft.entity.Entity");
-    jclass livingClass = lc->GetClass("net.minecraft.entity.EntityLivingBase");
+    // getHealth is declared on EntityLivingBase but resolved through the
+    // player class for the same reason as isSpectator above: GetMethodID
+    // walks superclasses, and EntityLivingBase had no obfuscated fallback, so
+    // asking for it directly made local health unreadable on obfuscated
+    // clients -- which marked the whole player state invalid.
+    jclass livingClass =
+        lc->GetClass("net.minecraft.entity.player.EntityPlayer");
     bool positionValid = false;
     bool entityIdValid = false;
     bool healthValid = false;
@@ -729,6 +766,31 @@ void Runtime::tick() {
       }
     }
     playerStateValid = positionValid && entityIdValid && healthValid;
+
+    // Why the lifecycle is or is not active, in one line. The phase gate
+    // needs featureEnabled && worldValid && playerValid && onHypixel &&
+    // bedwarsMode && !replay, and playerValid is itself three separate JNI
+    // reads. When any single one of those six inputs is false the whole
+    // Bedwars feature set sits idle and every counter downstream reads zero,
+    // which looks identical to "nothing happened" -- so the inputs have to be
+    // visible, not inferred. Rate limited; every field here is cheap.
+    if (settings.debug &&
+        (m_lastLifecycleLog == 0 || now < m_lastLifecycleLog ||
+         now - m_lastLifecycleLog >= 5000)) {
+      m_lastLifecycleLog = now;
+      Logger::info(
+          "[Bedwars] lifecycle inputs: world=%d player=%d pos=%d id=%d "
+          "health=%d (hp=%.1f) entityCls=%d playerCls=%d hypixel=%d "
+          "bedwars=%d inGame=%d preGame=%d replay=%d",
+          world ? 1 : 0, player ? 1 : 0, positionValid ? 1 : 0,
+          entityIdValid ? 1 : 0, healthValid ? 1 : 0,
+          static_cast<double>(health),
+          lc->GetClass("net.minecraft.entity.Entity") ? 1 : 0,
+          lc->GetClass("net.minecraft.entity.player.EntityPlayer") ? 1 : 0,
+          (g_inHypixelGame || g_inPreGameLobby) ? 1 : 0, g_mode == 0 ? 1 : 0,
+          g_inHypixelGame ? 1 : 0, g_inPreGameLobby ? 1 : 0,
+          g_inReplay ? 1 : 0);
+    }
   }
 
   SessionObservation observation;

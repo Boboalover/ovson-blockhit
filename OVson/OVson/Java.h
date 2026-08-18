@@ -278,6 +278,8 @@ public:
         {"net.minecraft.event.HoverEvent$Action", "ew$a"},
         {"net.minecraft.util.IChatComponent$Serializer", "eu$a"},
         {"net.minecraft.entity.player.EntityPlayer", "wn"},
+        {"net.minecraft.entity.EntityLivingBase", "pr"},
+        {"net.minecraft.client.entity.EntityOtherPlayerMP", "bev"},
         {"net.minecraft.entity.player.InventoryPlayer", "wm"},
         {"net.minecraft.item.ItemArmor", "yv"},
         {"net.minecraft.item.Item", "zw"},

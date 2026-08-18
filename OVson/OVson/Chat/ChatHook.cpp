@@ -319,7 +319,7 @@ static void JNICALL onMethodEntry(jvmtiEnv *jvmti_env, JNIEnv *jni_env, jthread 
 
 							jclass serializerCls = jni_env->FindClass("net/minecraft/util/IChatComponent$Serializer");
 							if (serializerCls) {
-								jmethodID toJson = lc->GetStaticMethodID(serializerCls, "componentToJson", "(Lnet/minecraft/util/IChatComponent;)Ljava/lang/String;", "func_150699_a", "a");
+								jmethodID toJson = lc->GetStaticMethodID(serializerCls, "componentToJson", "(Lnet/minecraft/util/IChatComponent;)Ljava/lang/String;", "func_150699_a", "a", "(Leu;)Ljava/lang/String;");
 								if (toJson) {
 									jstring jsonJStr = (jstring)jni_env->CallStaticObjectMethod(serializerCls, toJson, chatComponent);
 									if (jsonJStr) {

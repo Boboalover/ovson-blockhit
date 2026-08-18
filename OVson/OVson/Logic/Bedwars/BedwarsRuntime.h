@@ -76,6 +76,7 @@ private:
   Tick m_lastInventoryScan = 0;
   Tick m_lastPlayerScan = 0;
   Tick m_lastItemDump = 0;
+  Tick m_lastLifecycleLog = 0;
   Tick m_lastTrapReminder = 0;
   std::uintptr_t m_worldToken = 0;
   void *m_worldReference = nullptr;

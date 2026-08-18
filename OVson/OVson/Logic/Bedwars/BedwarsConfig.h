@@ -33,15 +33,15 @@ struct Settings {
   bool debug = false;
   bool sounds = true;
   bool onlyNextEvent = true;
-  bool resourceHud = false;
+  // The resource HUD's visibility lives in hud[HudId::Resource] and nowhere
+  // else. It used to also have its own bool here, and the two could disagree
+  // -- deserialize() overwrote the bool from the HUD slot at the end, so any
+  // value written to the bool alone was silently dropped on the next load.
+  // Timer/height placement lives only in hud[] as well, for the same reason.
+  const HudLayout &hudLayout(HudId id) const;
+  bool resourceHudVisible() const;
   std::array<bool, kResourceCount> resources = {true, true, true, true};
   bool shopDuplicatePrevention = false;
-  float timerX = 0.02F;
-  float timerY = 0.20F;
-  float timerScale = 1.0F;
-  float heightX = 0.02F;
-  float heightY = 0.45F;
-  float heightScale = 1.0F;
   int heightLimitOverride = 0;
   float playerAlertRange = 32.0F;
   int trapReminderSeconds = 90;

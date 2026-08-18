@@ -1121,7 +1121,34 @@ void cmd_lookat(const std::string &args) {
                     std::string cName = clsUtf ? clsUtf : "unknown";
                     env->ReleaseStringUTFChars(clsNameStr, clsUtf);
 
+                    // Block metadata used to come from BedDefenseManager,
+                    // which no longer exists. Read it straight off the state
+                    // so .lookat keeps printing what it always did. The
+                    // reporter is muted for the lookup because a client with
+                    // different mappings would otherwise spam a "FAILED:"
+                    // line into chat for a purely cosmetic field.
+                    int meta = -1;
+                    {
+                      Lunar::DiagnosticReporter savedReporter = Lunar::reporter;
+                      Lunar::reporter = nullptr;
+                      jmethodID m_getMeta = lc->GetMethodID(
+                          blockCls, "getMetaFromState",
+                          "(Lnet/minecraft/block/state/IBlockState;)I",
+                          "func_176201_c", "c", "(Lalz;)I");
+                      Lunar::reporter = savedReporter;
+                      if (m_getMeta) {
+                        meta = env->CallIntMethod(block, m_getMeta, state);
+                        if (env->ExceptionCheck()) {
+                          env->ExceptionClear();
+                          meta = -1;
+                        }
+                      }
+                    }
+
                     debugInfo = "§7ID: §f" + std::to_string(id) +
+                                " §7Meta: §f" +
+                                (meta >= 0 ? std::to_string(meta)
+                                           : std::string("?")) +
                                 " §7Name: §f" + uName + " §7Class: §f" + cName;
 
                     env->DeleteLocalRef(objCls);

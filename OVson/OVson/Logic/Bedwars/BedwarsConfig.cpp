@@ -110,6 +110,14 @@ bool Settings::enabled(Module module) const {
   return masterEnabled && index < modules.size() && modules[index];
 }
 
+const HudLayout &Settings::hudLayout(HudId id) const {
+  return hud[static_cast<std::size_t>(id)];
+}
+
+bool Settings::resourceHudVisible() const {
+  return hud[static_cast<std::size_t>(HudId::Resource)].visible;
+}
+
 Settings get() {
   std::lock_guard<std::mutex> lock(g_mutex);
   ensureInitializedLocked();
@@ -172,7 +180,6 @@ bool isResourceHudEnabled() {
 }
 void setResourceHudEnabled(bool enabled) {
   mutate([&](Settings &settings) {
-    settings.resourceHud = enabled;
     settings.hud[static_cast<std::size_t>(HudId::Resource)].visible = enabled;
   });
 }
@@ -193,8 +200,8 @@ float getTimerX() {
 }
 void setTimerX(float value) {
   mutate([&](Settings &settings) {
-    settings.timerX = std::clamp(value, 0.0F, 1.0F);
-    settings.hud[static_cast<std::size_t>(HudId::EventTimer)].x = settings.timerX;
+    settings.hud[static_cast<std::size_t>(HudId::EventTimer)].x =
+        std::clamp(value, 0.0F, 1.0F);
   });
 }
 float getTimerY() {
@@ -202,8 +209,8 @@ float getTimerY() {
 }
 void setTimerY(float value) {
   mutate([&](Settings &settings) {
-    settings.timerY = std::clamp(value, 0.0F, 1.0F);
-    settings.hud[static_cast<std::size_t>(HudId::EventTimer)].y = settings.timerY;
+    settings.hud[static_cast<std::size_t>(HudId::EventTimer)].y =
+        std::clamp(value, 0.0F, 1.0F);
   });
 }
 float getTimerScale() {
@@ -211,9 +218,8 @@ float getTimerScale() {
 }
 void setTimerScale(float value) {
   mutate([&](Settings &settings) {
-    settings.timerScale = std::clamp(value, 0.5F, 2.5F);
     settings.hud[static_cast<std::size_t>(HudId::EventTimer)].scale =
-        settings.timerScale;
+        std::clamp(value, 0.5F, 2.5F);
   });
 }
 float getHeightX() {
@@ -221,8 +227,8 @@ float getHeightX() {
 }
 void setHeightX(float value) {
   mutate([&](Settings &settings) {
-    settings.heightX = std::clamp(value, 0.0F, 1.0F);
-    settings.hud[static_cast<std::size_t>(HudId::Height)].x = settings.heightX;
+    settings.hud[static_cast<std::size_t>(HudId::Height)].x =
+        std::clamp(value, 0.0F, 1.0F);
   });
 }
 float getHeightY() {
@@ -230,8 +236,8 @@ float getHeightY() {
 }
 void setHeightY(float value) {
   mutate([&](Settings &settings) {
-    settings.heightY = std::clamp(value, 0.0F, 1.0F);
-    settings.hud[static_cast<std::size_t>(HudId::Height)].y = settings.heightY;
+    settings.hud[static_cast<std::size_t>(HudId::Height)].y =
+        std::clamp(value, 0.0F, 1.0F);
   });
 }
 float getHeightScale() {
@@ -239,9 +245,8 @@ float getHeightScale() {
 }
 void setHeightScale(float value) {
   mutate([&](Settings &settings) {
-    settings.heightScale = std::clamp(value, 0.5F, 2.5F);
     settings.hud[static_cast<std::size_t>(HudId::Height)].scale =
-        settings.heightScale;
+        std::clamp(value, 0.5F, 2.5F);
   });
 }
 float getPlayerAlertRange() { return get().playerAlertRange; }
@@ -315,16 +320,18 @@ std::string serialize(const Settings &settings) {
     out << moduleKey(static_cast<Module>(i)) << '=' << settings.modules[i] << ';';
   out << "debug=" << settings.debug << ";sounds=" << settings.sounds
       << ";onlyNextEvent=" << settings.onlyNextEvent
-      << ";resourceHud=" << settings.resourceHud
+      << ";resourceHud=" << settings.resourceHudVisible()
       << ";resourceIron=" << settings.resources[0]
       << ";resourceGold=" << settings.resources[1]
       << ";resourceDiamond=" << settings.resources[2]
       << ";resourceEmerald=" << settings.resources[3]
       << ";shopDuplicatePrevention=" << settings.shopDuplicatePrevention
-      << ";timerX=" << settings.timerX << ";timerY=" << settings.timerY
-      << ";timerScale=" << settings.timerScale
-      << ";heightX=" << settings.heightX << ";heightY=" << settings.heightY
-      << ";heightScale=" << settings.heightScale
+      << ";timerX=" << settings.hudLayout(HudId::EventTimer).x
+      << ";timerY=" << settings.hudLayout(HudId::EventTimer).y
+      << ";timerScale=" << settings.hudLayout(HudId::EventTimer).scale
+      << ";heightX=" << settings.hudLayout(HudId::Height).x
+      << ";heightY=" << settings.hudLayout(HudId::Height).y
+      << ";heightScale=" << settings.hudLayout(HudId::Height).scale
       << ";heightLimitOverride=" << settings.heightLimitOverride
       << ";playerAlertRange=" << settings.playerAlertRange
       << ";trapReminderSeconds=" << settings.trapReminderSeconds
@@ -356,19 +363,24 @@ Settings deserialize(const std::string &data) {
   settings.debug = readBool(pairs, "debug", false);
   settings.sounds = readBool(pairs, "sounds", true);
   settings.onlyNextEvent = readBool(pairs, "onlyNextEvent", true);
-  settings.resourceHud = readBool(pairs, "resourceHud", false);
+  const bool legacyResourceHud = readBool(pairs, "resourceHud", false);
   settings.resources[0] = readBool(pairs, "resourceIron", true);
   settings.resources[1] = readBool(pairs, "resourceGold", true);
   settings.resources[2] = readBool(pairs, "resourceDiamond", true);
   settings.resources[3] = readBool(pairs, "resourceEmerald", true);
   settings.shopDuplicatePrevention =
       readBool(pairs, "shopDuplicatePrevention", false);
-  settings.timerX = readFloat(pairs, "timerX", 0.02F, 0.0F, 1.0F);
-  settings.timerY = readFloat(pairs, "timerY", 0.20F, 0.0F, 1.0F);
-  settings.timerScale = readFloat(pairs, "timerScale", 1.0F, 0.5F, 2.5F);
-  settings.heightX = readFloat(pairs, "heightX", 0.02F, 0.0F, 1.0F);
-  settings.heightY = readFloat(pairs, "heightY", 0.45F, 0.0F, 1.0F);
-  settings.heightScale = readFloat(pairs, "heightScale", 1.0F, 0.5F, 2.5F);
+  // v1 kept the timer/height placement in their own top-level keys. From v2
+  // on the hud[] block below is the only place they live, so these are read
+  // into locals purely to migrate an old file.
+  const HudLayout legacyTimer{
+      false, readFloat(pairs, "timerX", 0.02F, 0.0F, 1.0F),
+      readFloat(pairs, "timerY", 0.20F, 0.0F, 1.0F),
+      readFloat(pairs, "timerScale", 1.0F, 0.5F, 2.5F)};
+  const HudLayout legacyHeight{
+      false, readFloat(pairs, "heightX", 0.02F, 0.0F, 1.0F),
+      readFloat(pairs, "heightY", 0.45F, 0.0F, 1.0F),
+      readFloat(pairs, "heightScale", 1.0F, 0.5F, 2.5F)};
   settings.heightLimitOverride =
       readInt(pairs, "heightLimitOverride", 0, 0, 512);
   settings.playerAlertRange =
@@ -399,25 +411,16 @@ Settings deserialize(const std::string &data) {
   if (version == 1) {
     settings.hud[static_cast<std::size_t>(HudId::EventTimer)] = {
         settings.modules[static_cast<std::size_t>(Module::EventTimers)],
-        settings.timerX, settings.timerY, settings.timerScale};
+        legacyTimer.x, legacyTimer.y, legacyTimer.scale};
     settings.hud[static_cast<std::size_t>(HudId::Height)] = {
         settings.modules[static_cast<std::size_t>(Module::HeightOverlay)],
-        settings.heightX, settings.heightY, settings.heightScale};
+        legacyHeight.x, legacyHeight.y, legacyHeight.scale};
     settings.hud[static_cast<std::size_t>(HudId::Resource)].visible =
-        settings.resourceHud &&
+        legacyResourceHud &&
         settings.modules[static_cast<std::size_t>(Module::ResourceTracker)];
     settings.hud[static_cast<std::size_t>(HudId::TeamState)].visible =
         settings.modules[static_cast<std::size_t>(Module::UpgradeHud)];
   }
-  settings.resourceHud =
-      settings.hud[static_cast<std::size_t>(HudId::Resource)].visible;
-  settings.timerX = settings.hud[static_cast<std::size_t>(HudId::EventTimer)].x;
-  settings.timerY = settings.hud[static_cast<std::size_t>(HudId::EventTimer)].y;
-  settings.timerScale =
-      settings.hud[static_cast<std::size_t>(HudId::EventTimer)].scale;
-  settings.heightX = settings.hud[static_cast<std::size_t>(HudId::Height)].x;
-  settings.heightY = settings.hud[static_cast<std::size_t>(HudId::Height)].y;
-  settings.heightScale = settings.hud[static_cast<std::size_t>(HudId::Height)].scale;
   return settings;
 }
 

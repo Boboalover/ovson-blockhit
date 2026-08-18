@@ -469,16 +469,17 @@ void configRoundTripPreservesNamedSettings() {
   settings.debug = !defaults.debug;
   settings.sounds = !defaults.sounds;
   settings.onlyNextEvent = !defaults.onlyNextEvent;
-  settings.resourceHud = !defaults.resourceHud;
+  settings.hud[static_cast<std::size_t>(HudId::Resource)].visible =
+      !defaults.resourceHudVisible();
   settings.resources[static_cast<std::size_t>(Resource::Iron)] =
       !defaults.resources[static_cast<std::size_t>(Resource::Iron)];
   settings.shopDuplicatePrevention = !defaults.shopDuplicatePrevention;
-  settings.timerX = 0.11F;
-  settings.timerY = 0.22F;
-  settings.timerScale = 1.25F;
-  settings.heightX = 0.33F;
-  settings.heightY = 0.44F;
-  settings.heightScale = 1.75F;
+  settings.hud[static_cast<std::size_t>(HudId::EventTimer)].x = 0.11F;
+  settings.hud[static_cast<std::size_t>(HudId::EventTimer)].y = 0.22F;
+  settings.hud[static_cast<std::size_t>(HudId::EventTimer)].scale = 1.25F;
+  settings.hud[static_cast<std::size_t>(HudId::Height)].x = 0.33F;
+  settings.hud[static_cast<std::size_t>(HudId::Height)].y = 0.44F;
+  settings.hud[static_cast<std::size_t>(HudId::Height)].scale = 1.75F;
   settings.heightLimitOverride = 123;
   settings.playerAlertRange = 47.0F;
   settings.trapReminderSeconds = defaults.trapReminderSeconds + 3;
@@ -501,16 +502,20 @@ void configRoundTripPreservesNamedSettings() {
   require(decoded.debug == settings.debug &&
               decoded.sounds == settings.sounds &&
               decoded.onlyNextEvent == settings.onlyNextEvent &&
-              decoded.resourceHud == settings.resourceHud &&
+              decoded.resourceHudVisible() ==
+                  settings.resourceHudVisible() &&
               decoded.shopDuplicatePrevention ==
                   settings.shopDuplicatePrevention,
           "config round trip lost a boolean preference");
   require(decoded.resources[static_cast<std::size_t>(Resource::Iron)] ==
               settings.resources[static_cast<std::size_t>(Resource::Iron)],
           "config round trip lost a per-resource preference");
-  require(decoded.timerX == 0.11F && decoded.timerY == 0.22F &&
-              decoded.timerScale == 1.25F && decoded.heightX == 0.33F &&
-              decoded.heightY == 0.44F && decoded.heightScale == 1.75F,
+  require(decoded.hudLayout(HudId::EventTimer).x == 0.11F &&
+              decoded.hudLayout(HudId::EventTimer).y == 0.22F &&
+              decoded.hudLayout(HudId::EventTimer).scale == 1.25F &&
+              decoded.hudLayout(HudId::Height).x == 0.33F &&
+              decoded.hudLayout(HudId::Height).y == 0.44F &&
+              decoded.hudLayout(HudId::Height).scale == 1.75F,
           "config round trip lost an overlay position or scale");
   require(decoded.playerAlertRange == 47.0F &&
               decoded.heightLimitOverride == 123 &&
@@ -533,9 +538,11 @@ void configRejectsMalformedAndClampsRanges() {
       "bedEspBlue=broken;timerX=0.5junk;");
   require(!settings.masterEnabled && !settings.debug,
           "malformed booleans were accepted");
-  require(settings.timerScale == 1.0F, "NaN was accepted");
-  require(settings.timerX == 0.02F, "trailing numeric text was accepted");
-  require(std::abs(settings.timerY - 0.42F) < 0.001F,
+  require(settings.hudLayout(HudId::EventTimer).scale == 1.0F,
+          "NaN was accepted");
+  require(settings.hudLayout(HudId::EventTimer).x == 0.02F,
+          "trailing numeric text was accepted");
+  require(std::abs(settings.hudLayout(HudId::EventTimer).y - 0.42F) < 0.001F,
           "a stale key stopped the parser before a valid key");
   require(settings.playerAlertRange == 256.0F,
           "player range was not clamped");
@@ -1071,6 +1078,10 @@ void deathKeepsArmorButClearsInventoryState() {
   // he respawns still wearing Iron.
   monitor.forgetPlayerLoadout("Steve");
 
+  // He respawns empty-handed -- the potion was in his inventory, so it is
+  // gone. Observing him still holding it would not be a post-death state.
+  player.heldItem = {};
+
   // Same Iron armor, so nothing new to say about it. A re-alert here would
   // mean the armor baseline was wiped along with the inventory, and the user
   // would get spammed with the same armor line after every single kill.
@@ -1225,14 +1236,18 @@ void swordTiersAreMonotonicAndAllowlistIsExplicit() {
   auto player = enemy(2, "Duelist");
   player.heldItem = {"swordWood", "Wooden Sword", 0, false};
   monitor.observe({player}, options, 1000);
+  // Stone is a real upgrade over the wooden sword everyone spawns with, and a
+  // stone sword is the first thing most players buy, so it alerts like every
+  // other tier above Wood. Only Wood itself is silent.
   player.heldItem = {"swordStone", "Stone Sword", 0, false};
-  require(monitor.observe({player}, options, 1100).empty(),
-          "non-alert sword tier emitted an alert");
+  require(monitor.observe({player}, options, 1100).size() == 1,
+          "stone sword upgrade did not alert");
   player.heldItem = {"swordIron", "Iron Sword", 0, false};
   require(monitor.observe({player}, options, 1200).size() == 1,
           "Iron sword upgrade did not alert");
   player.heldItem = {"swordWood", "Wooden Sword", 0, false};
-  monitor.observe({player}, options, 1300);
+  require(monitor.observe({player}, options, 1300).empty(),
+          "switching back down to the spawn sword alerted");
   player.heldItem = {"swordIron", "Iron Sword", 0, false};
   require(monitor.observe({player}, options, 1400).empty(),
           "sword downgrade reset the highest seen tier");

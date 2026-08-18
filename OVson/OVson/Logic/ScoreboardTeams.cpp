@@ -95,9 +95,9 @@ void setTeamColorSticky(const std::string &name, const std::string &newTeam, boo
   // or reattached after the match had already started, or the chat hook
   // wasn't attached in time -- g_localTeam stays empty for the rest of the
   // match with no other way to recover it. Every Bedwars Tools feature
-  // that depends on knowing "which bed is ours" (Anti Misplace) or which
-  // nearby players are teammates (Player Alerts) silently stops working in
-  // that case, even though the per-player team map above is still being
+  // that depends on knowing which nearby players are teammates (Player
+  // Alerts, own-team upgrade tracking) silently stops working in that
+  // case, even though the per-player team map above is still being
   // populated correctly via the scoreboard/tab list. Mirror any confident
   // team resolution for the local player's own name into g_localTeam here
   // as a fallback, without ever overwriting an already-known value.
@@ -295,13 +295,13 @@ void updateTeamsFromScoreboard() {
           if (array) {
             jclass epCls = lc->GetClass("net.minecraft.entity.player.EntityPlayer");
             jmethodID m_getName = lc->GetMethodID(epCls, "getName", "()Ljava/lang/String;", "func_70005_c_", "e_");
-            jfieldID f_inventory = lc->GetFieldID(epCls, "inventory", "Lnet/minecraft/entity/player/InventoryPlayer;", "field_71071_by", "bi");
+            jfieldID f_inventory = lc->GetFieldID(epCls, "inventory", "Lnet/minecraft/entity/player/InventoryPlayer;", "field_71071_by", "bi", "Lwm;");
             jclass ipCls = lc->GetClass("net.minecraft.entity.player.InventoryPlayer");
-            jfieldID f_armorInventory = lc->GetFieldID(ipCls, "armorInventory", "[Lnet/minecraft/item/ItemStack;", "field_70460_b", "b");
+            jfieldID f_armorInventory = lc->GetFieldID(ipCls, "armorInventory", "[Lnet/minecraft/item/ItemStack;", "field_70460_b", "b", "[Lzx;");
             jclass isCls = lc->GetClass("net.minecraft.item.ItemStack");
-            jmethodID m_getItem = lc->GetMethodID(isCls, "getItem", "()Lnet/minecraft/item/Item;", "func_77973_b", "b");
+            jmethodID m_getItem = lc->GetMethodID(isCls, "getItem", "()Lnet/minecraft/item/Item;", "func_77973_b", "b", "()Lzw;");
             jclass iaCls = lc->GetClass("net.minecraft.item.ItemArmor");
-            jmethodID m_getColor = lc->GetMethodID(iaCls, "getColor", "(Lnet/minecraft/item/ItemStack;)I", "func_82814_b", "b");
+            jmethodID m_getColor = lc->GetMethodID(iaCls, "getColor", "(Lnet/minecraft/item/ItemStack;)I", "func_82814_b", "b", "(Lzx;)I");
 
             if (epCls && m_getName && f_inventory && ipCls && f_armorInventory && isCls && m_getItem && iaCls && m_getColor) {
                 int len = env->GetArrayLength(array);

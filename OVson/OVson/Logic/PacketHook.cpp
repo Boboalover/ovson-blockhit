@@ -1,4 +1,7 @@
 #include "PacketHook.h"
+
+#include <set>
+#include <string>
 #include "BlockHitSound.h"
 #include "PacketFilterHook_bytes.h"
 #include "../Java.h"
@@ -132,6 +135,18 @@ static jobject s_hookObj = nullptr;
 static ULONGLONG s_nextAttempt = 0;
 static bool s_addFailureLogged = false;
 
+// Discovery walks a chain of client-specific lookups and every failure along
+// it is a silent return, which is fine while it eventually succeeds and
+// useless when it never does: the feature is simply absent with nothing in
+// the log to say why. Each stage reports itself once, so a client that
+// remaps one link in the chain names that link instead of leaving the whole
+// feature looking dead.
+static void reportStall(const char *stage) {
+    static std::set<std::string> reported;
+    if (reported.insert(stage).second)
+        Logger::error("[PacketHook] discovery stalled at: %s", stage);
+}
+
 void PacketHook::update() {
     JNIEnv* env = lc->getEnv();
     if (!env) return;
@@ -150,13 +165,13 @@ void PacketHook::update() {
     if (s_injected) return;
 
     jclass mcCls = lc->GetClass("net.minecraft.client.Minecraft");
-    if (!mcCls) return;
+    if (!mcCls) { reportStall("Minecraft class"); return; }
 
-    jmethodID getMcMethod = lc->GetStaticMethodID(mcCls, "getMinecraft", "()Lnet/minecraft/client/Minecraft;", "func_71410_x", "A");
-    if (!getMcMethod) return;
+    jmethodID getMcMethod = lc->GetStaticMethodID(mcCls, "getMinecraft", "()Lnet/minecraft/client/Minecraft;", "func_71410_x", "A", "()Lave;");
+    if (!getMcMethod) { reportStall("Minecraft.getMinecraft()"); return; }
 
     jobject mcObj = env->CallStaticObjectMethod(mcCls, getMcMethod);
-    if (!mcObj) return;
+    if (!mcObj) { reportStall("Minecraft instance"); return; }
 
     static ULONGLONG lastAttempt = 0;
     ULONGLONG now = GetTickCount64();
@@ -173,7 +188,11 @@ void PacketHook::update() {
     static jfieldID channelField = nullptr;
 
     if (!theWorldField) {
-        theWorldField = lc->GetFieldID(mcCls, "theWorld", "Lnet/minecraft/client/multiplayer/WorldClient;", "func_71441_e", "f");
+        theWorldField = lc->GetFieldID(mcCls, "theWorld", "Lnet/minecraft/client/multiplayer/WorldClient;", "field_71441_e", "f", "Lbdb;");
+        if (!theWorldField)
+            theWorldField = lc->FindFieldBySignature(mcCls, "Lbdb;");
+        if (!theWorldField)
+            reportStall("Minecraft.theWorld field");
     }
     jobject theWorld = theWorldField ? env->GetObjectField(mcObj, theWorldField) : nullptr;
     if (env->ExceptionCheck()) env->ExceptionClear();
@@ -197,12 +216,14 @@ void PacketHook::update() {
     }
     
     if (!getNetHandler) {
+        reportStall("Minecraft.getNetHandler()");
         env->DeleteLocalRef(mcObj);
         return;
     }
 
     jobject nh = env->CallObjectMethod(mcObj, getNetHandler);
     if (!nh) {
+        reportStall("NetHandlerPlayClient instance");
         env->DeleteLocalRef(mcObj);
         return;
     }
@@ -224,6 +245,100 @@ void PacketHook::update() {
                 nmField = lc->FindFieldBySignature(nhCls, "Lej;");
             }
         }
+
+        // Everything above searches for NetworkManager by name -- either the
+        // deobfuscated one or the single obfuscated name this Minecraft
+        // version happens to use. Both are guesses about how a particular
+        // client shipped the jar, and a client that remaps it to anything
+        // else leaves the whole packet hook dead with no way to tell why.
+        //
+        // So identify it by what it demonstrably IS instead: the object held
+        // by NetHandlerPlayClient that owns an io.netty.channel.Channel.
+        // Netty is a third-party library, so its type name survives any
+        // Minecraft remapping, which makes it the one stable anchor in this
+        // chain. That is also exactly the field the code below goes on to
+        // read, so anything this finds is by definition the right object.
+        if (!getNetworkManager && !nmField && lc->jvmti) {
+            // Walk the hierarchy: GetClassFields only reports fields declared
+            // by the class itself, and a client that subclasses
+            // NetHandlerPlayClient would otherwise hide the one field we want.
+            jclass walk = nhCls;
+            bool ownsWalkRef = false;
+            while (walk && !nmField) {
+                jint fieldCount = 0;
+                jfieldID *fields = nullptr;
+                if (lc->jvmti->GetClassFields(walk, &fieldCount, &fields) ==
+                    JVMTI_ERROR_NONE) {
+                    for (jint i = 0; i < fieldCount && !nmField; ++i) {
+                        char *fieldName = nullptr;
+                        char *fieldSig = nullptr;
+                        if (lc->jvmti->GetFieldName(walk, fields[i], &fieldName,
+                                                    &fieldSig, nullptr) !=
+                            JVMTI_ERROR_NONE) {
+                            continue;
+                        }
+                        // GetClassFields returns statics too, and reading one
+                        // with GetObjectField (instead of
+                        // GetStaticObjectField) is undefined -- on HotSpot it
+                        // dereferences garbage and takes the whole poll down
+                        // with an access violation. NetworkManager is an
+                        // instance field, so skip statics outright.
+                        jint modifiers = 0;
+                        constexpr jint kAccStatic = 0x0008;
+                        const bool isStatic =
+                            lc->jvmti->GetFieldModifiers(walk, fields[i],
+                                                         &modifiers) !=
+                                JVMTI_ERROR_NONE ||
+                            (modifiers & kAccStatic) != 0;
+
+                        // Object-typed fields only; a primitive or an array
+                        // cannot own a Channel.
+                        if (!isStatic && fieldSig && fieldSig[0] == 'L') {
+                            jobject candidate =
+                                env->GetObjectField(nh, fields[i]);
+                            if (env->ExceptionCheck()) env->ExceptionClear();
+                            if (candidate) {
+                                jclass candidateCls =
+                                    env->GetObjectClass(candidate);
+                                if (candidateCls &&
+                                    lc->FindFieldBySignature(
+                                        candidateCls,
+                                        "Lio/netty/channel/Channel;")) {
+                                    nmField = fields[i];
+                                    Logger::info(
+                                        "[PacketHook] NetworkManager found "
+                                        "structurally: field '%s' of type %s",
+                                        fieldName ? fieldName : "?",
+                                        fieldSig ? fieldSig : "?");
+                                }
+                                if (candidateCls)
+                                    env->DeleteLocalRef(candidateCls);
+                                env->DeleteLocalRef(candidate);
+                            }
+                            if (env->ExceptionCheck()) env->ExceptionClear();
+                        }
+                        if (fieldName)
+                            lc->jvmti->Deallocate((unsigned char *)fieldName);
+                        if (fieldSig)
+                            lc->jvmti->Deallocate((unsigned char *)fieldSig);
+                    }
+                    if (fields)
+                        lc->jvmti->Deallocate((unsigned char *)fields);
+                }
+                if (nmField)
+                    break;
+                jclass parent = env->GetSuperclass(walk);
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                if (ownsWalkRef)
+                    env->DeleteLocalRef(walk);
+                walk = parent;
+                ownsWalkRef = true;
+            }
+            if (ownsWalkRef && walk)
+                env->DeleteLocalRef(walk);
+            if (!nmField)
+                reportStall("NetworkManager field (structural scan)");
+        }
     }
     
     if (getNetworkManager) {
@@ -233,6 +348,7 @@ void PacketHook::update() {
     }
 
     if (!networkManager) {
+        reportStall("NetworkManager on NetHandlerPlayClient");
         env->DeleteLocalRef(nhCls);
         env->DeleteLocalRef(nh);
         env->DeleteLocalRef(mcObj);
@@ -245,6 +361,7 @@ void PacketHook::update() {
     }
     
     if (!channelField) {
+        reportStall("io.netty.channel.Channel field on NetworkManager");
         env->DeleteLocalRef(nmCls);
         env->DeleteLocalRef(nhCls);
         env->DeleteLocalRef(networkManager);
@@ -462,7 +579,7 @@ void PacketHook::uninstall() {
         return;
     }
 
-    jmethodID getMc = lc->GetStaticMethodID(mcCls, "getMinecraft", "()Lnet/minecraft/client/Minecraft;", "func_71410_x", "A");
+    jmethodID getMc = lc->GetStaticMethodID(mcCls, "getMinecraft", "()Lnet/minecraft/client/Minecraft;", "func_71410_x", "A", "()Lave;");
     if (!getMc) {
         env->DeleteLocalRef(mcCls);
         finalizeNativeState();

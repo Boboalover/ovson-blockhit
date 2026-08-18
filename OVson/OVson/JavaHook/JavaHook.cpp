@@ -243,8 +243,8 @@ void shutdown() {
     // which is exactly the normal iteration loop while testing), the old,
     // never-disposed environment is still sitting there holding whatever
     // capabilities it was granted. On the next injection's fresh
-    // AddCapabilities() call for the placement-hook capabilities
-    // (can_generate_breakpoint_events and friends), the JVM can then
+    // AddCapabilities() call for the class-file-load-hook capabilities
+    // (can_retransform_classes and friends), the JVM can then
     // report them as unavailable even though nothing about the machine or
     // JVM actually changed -- because they're still allocated to the
     // zombie environment nobody ever released. Disposing our environment
