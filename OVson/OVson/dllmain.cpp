@@ -18,7 +18,6 @@
 #include "Chat/Commands.h"
 #include "Config/Config.h"
 #include "Render/RenderHook.h"
-#include "Render/TextureLoader.h"
 #include "Plugins/PluginLoader.h"
 #include "Chat/ChatAPI_Bridge.h"
 #include "JavaHook/JavaHook.h"
@@ -26,7 +25,6 @@
 #include "Logic/PacketHook.h"
 #include "Logic/Bedwars/BedwarsConfig.h"
 #include "Logic/Bedwars/BedwarsRuntime.h"
-#include "Logic/BedDefense/BedDefenseManager.h"
 #include "Utils/Logger.h"
 #include <ShlObj.h>
 #include "Utils/ReplaySpammer.h"
@@ -78,7 +76,6 @@ void init(void *instance) {
     lc->GetLoadedClasses();
     Config::initialize(static_cast<HMODULE>(instance));
     OVson::Bedwars::Configuration::initialize();
-    BedDefense::TextureLoader::setModule(static_cast<HMODULE>(instance));
     RegisterDefaultCommands();
     OVson::initialize();
     Anticheat::initialize();
@@ -228,7 +225,6 @@ void init(void *instance) {
   try {
     Logger::info("Shutting down ChatInterceptor...");
     OVson::Bedwars::Runtime::instance().shutdown();
-    BedDefense::BedDefenseManager::destroy();
     OVson::shutdown();
     ChatHook::uninstall();
     PacketHook::uninstall();

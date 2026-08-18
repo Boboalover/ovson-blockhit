@@ -11,17 +11,15 @@ namespace OVson::Bedwars {
 namespace {
 
 constexpr std::array<const char *, kModuleCount> kModuleNames = {
-    "Event Timers",   "Shop Helper",    "Anti Misplace",
-    "Bed Tracker",    "Height Overlay", "Upgrade Alerts",
-    "Consume Alerts", "Pickup Alerts",   "Armor Alerts",
-    "Trap Notifier",  "Resource Tracker", "Item Alerts",
-    "Upgrade HUD"};
+    "Event Timers",   "Shop Helper",      "Height Overlay",
+    "Upgrade Alerts", "Consume Alerts",   "Pickup Alerts",
+    "Armor Alerts",   "Trap Notifier",    "Resource Tracker",
+    "Item Alerts",    "Upgrade HUD"};
 
 constexpr std::array<const char *, kModuleCount> kModuleKeys = {
-    "eventTimers",   "shopHelper",    "antiMisplace",  "bedTracker",
-    "heightOverlay", "upgradeAlerts", "consumeAlerts", "pickupAlerts",
-    "armorAlerts",   "trapNotifier",  "resourceTracker", "itemAlerts",
-    "upgradeHud"};
+    "eventTimers",   "shopHelper",      "heightOverlay", "upgradeAlerts",
+    "consumeAlerts", "pickupAlerts",    "armorAlerts",   "trapNotifier",
+    "resourceTracker", "itemAlerts",    "upgradeHud"};
 
 std::size_t indexOf(Module module) {
   const auto index = static_cast<std::size_t>(module);
@@ -293,6 +291,25 @@ bool TeamTracker::observeSharpness(TeamId team, Tick now,
   if (state.sharpnessObserved)
     return false;
   state.sharpnessObserved = true;
+  return true;
+}
+
+bool TeamTracker::observeProtection(TeamId team, Tick now,
+                                    const std::string &source) {
+  // Protection is a team-wide purchase, so the first enemy seen wearing an
+  // enchanted piece reveals it for their whole team and everyone after them
+  // is redundant. Kept separate from the Sharpness flag on purpose: a team
+  // can buy either upgrade first, and folding them together would let
+  // whichever arrived first hide the other.
+  const std::size_t index = teamIndex(team);
+  if (index >= m_teams.size())
+    return false;
+  TeamState &state = m_teams[index];
+  state.latestObservation = now;
+  state.latestSource = source.substr(0, 64);
+  if (state.protectionObserved)
+    return false;
+  state.protectionObserved = true;
   return true;
 }
 
@@ -710,6 +727,14 @@ const char *potionName(PotionKind potion) {
   }
 }
 
+const char *alertOutputName(AlertOutput output) {
+  switch (output) {
+  case AlertOutput::Chat: return "Chat";
+  case AlertOutput::Both: return "Chat + Alert";
+  default: return "Alert";
+  }
+}
+
 const char *visibilityModeName(VisibilityMode mode) {
   switch (mode) {
   case VisibilityMode::RangeOnly: return "Range Only";
@@ -746,10 +771,17 @@ bool isKnockbackStick(const VisibleItem &item) {
   const std::string type = normalizeText(item.typeName);
   if (type != "stick" && type != "item stick")
     return false;
+  // An enchanted stick is enough on its own. The shop item is a plain stick
+  // with Knockback on it, and the enchantment is the whole point of carrying
+  // one -- there is no other reason to hold an enchanted stick in a Bedwars
+  // game. Requiring the display name to also read "Knockback Stick" made this
+  // depend on the server bothering to rename the stack, which it does not
+  // always do, so the alert silently never fired.
+  if (item.enchanted)
+    return true;
   const std::string name = normalizeText(item.displayName);
-  return item.enchanted &&
-         (name == "knockback stick" || name == "kb stick" ||
-          name.rfind("knockback stick ", 0) == 0);
+  return name == "knockback stick" || name == "kb stick" ||
+         name.rfind("knockback stick ", 0) == 0;
 }
 
 PotionKind classifyPotion(const VisibleItem &item) {
@@ -758,10 +790,16 @@ PotionKind classifyPotion(const VisibleItem &item) {
     return PotionKind::Unknown;
   if (item.metadata < 0)
     return PotionKind::Unknown;
-  const int base = item.metadata & 0x3FFF;
-  if ((base & 0x7F) == 14) return PotionKind::Invisibility;
-  if ((base & 0x7F) == 11) return PotionKind::Jump;
-  if ((base & 0x7F) == 2) return PotionKind::Speed;
+  // Only the low four bits carry the potion type. Bit 5 is the level-II flag
+  // and bit 6 is the extended-duration flag, so masking with 0x7F folded those
+  // into the comparison: Hypixel's Speed II reads 8226, whose low seven bits
+  // are 34 rather than 2, and the classification fell through to Unknown.
+  // Invisibility has no level II, which is exactly why that one kept working
+  // while Speed and Jump Boost never alerted.
+  const int potionType = item.metadata & 0x0F;
+  if (potionType == 14) return PotionKind::Invisibility;
+  if (potionType == 11) return PotionKind::Jump;
+  if (potionType == 2) return PotionKind::Speed;
   return PotionKind::Unknown;
 }
 
@@ -784,6 +822,8 @@ SwordTier classifySwordTier(const VisibleItem &item) {
 
 ImportantItem classifyImportantItem(const VisibleItem &item) {
   const SwordTier sword = classifySwordTier(item);
+  if (sword == SwordTier::Stone)
+    return ImportantItem::StoneSword;
   if (sword == SwordTier::Iron)
     return ImportantItem::IronSword;
   if (sword == SwordTier::Diamond)
@@ -800,7 +840,18 @@ ImportantItem classifyImportantItem(const VisibleItem &item) {
     return ImportantItem::InvisibilityPotion;
 
   const std::string type = normalizeText(item.typeName);
-  if (type == "bow" || type == "item bow") return ImportantItem::Bow;
+  if (type == "bow" || type == "item bow")
+    return item.enchanted ? ImportantItem::EnchantedBow : ImportantItem::Bow;
+  // Every egg in a Bedwars game is a Bridge Egg and every spawn egg is a
+  // Dream Defender; neither item exists in the mode for any other reason, so
+  // the base item id identifies them without needing the display name.
+  if (type == "egg" || type == "item egg") return ImportantItem::BridgeEgg;
+  if (type == "monsterplacer" || type == "spawn egg" ||
+      type == "item monsterplacer")
+    return ImportantItem::DreamDefender;
+  if (type == "bucketwater" || type == "water bucket" ||
+      type == "item bucketwater")
+    return ImportantItem::WaterBucket;
   if (type == "tnt" || type == "tile tnt") return ImportantItem::Tnt;
   if (type == "fireball" || type == "fire charge" ||
       type == "item fireball")
@@ -811,16 +862,21 @@ ImportantItem classifyImportantItem(const VisibleItem &item) {
   if (type == "applegold" || type == "golden apple" ||
       type == "item applegold")
     return ImportantItem::GoldenApple;
-  if (type == "milk" || type == "milk bucket" || type == "item milk")
+  // Hypixel's Magic Milk is a plain milk bucket, so the base item is the
+  // only thing that identifies it. The bucket has no other use in the mode.
+  if (type == "milk" || type == "milk bucket" || type == "bucketmilk" ||
+      type == "item milk")
     return ImportantItem::Milk;
   return ImportantItem::None;
 }
 
 const char *importantItemName(ImportantItem item) {
   switch (item) {
+  case ImportantItem::StoneSword: return "Stone Sword";
   case ImportantItem::IronSword: return "Iron Sword";
   case ImportantItem::DiamondSword: return "Diamond Sword";
   case ImportantItem::Bow: return "Bow";
+  case ImportantItem::EnchantedBow: return "Enchanted Bow";
   case ImportantItem::KnockbackStick: return "Knockback Stick";
   case ImportantItem::SpeedPotion: return "Speed Potion";
   case ImportantItem::JumpPotion: return "Jump Potion";
@@ -829,7 +885,10 @@ const char *importantItemName(ImportantItem item) {
   case ImportantItem::Fireball: return "Fireball";
   case ImportantItem::EnderPearl: return "Ender Pearl";
   case ImportantItem::GoldenApple: return "Golden Apple";
-  case ImportantItem::Milk: return "Milk Bucket";
+  case ImportantItem::Milk: return "Magic Milk";
+  case ImportantItem::BridgeEgg: return "Bridge Egg";
+  case ImportantItem::WaterBucket: return "Water Bucket";
+  case ImportantItem::DreamDefender: return "Dream Defender";
   default: return "";
   }
 }
@@ -851,19 +910,27 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
   const double maximumDistance = std::clamp(options.maximumDistance, 1.0, 256.0);
   const Tick cooldown = std::clamp<Tick>(options.cooldownMs, 250, 60000);
 
-  auto emit = [&](TrackedPlayer &tracked, PlayerAlert::Kind kind, int entityId,
-                   TeamId team, const std::string &text,
+  // `event` identifies WHAT happened, not just which category it belongs to.
+  // The cooldown exists to stop the same event repeating while it stays true,
+  // so it must only apply when the new event matches the one it last fired
+  // for. Comparing on category alone meant a player who triggered two
+  // different alerts of the same category within the cooldown -- their team
+  // revealing Sharpness and Protection together, an item alert landing right
+  // after a potion -- had the second one silently dropped as a repeat.
+  auto emit = [&](TrackedPlayer &tracked, PlayerAlert::Kind kind,
+                   const std::string &event, int entityId, TeamId team,
+                   const std::string &text,
                    std::vector<MessageSegment> segments,
                    bool respectCooldown = true) {
     const auto index = static_cast<std::size_t>(kind);
-    Tick &last = tracked.lastAlert[index];
-    if (respectCooldown && last != 0 && now >= last && now - last < cooldown) {
+    auto &memory = tracked.lastAlert[index];
+    if (respectCooldown && memory.at != 0 && memory.event == event &&
+        now >= memory.at && now - memory.at < cooldown) {
       ++m_diagnostics.cooldownRejected;
       return;
     }
-    if (last != 0 && now < last)
-      last = 0;
-    last = now;
+    memory.event = event;
+    memory.at = now;
     alerts.push_back({kind, entityId, text, std::move(segments), team});
     ++m_diagnostics.emitted;
   };
@@ -952,7 +1019,7 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
       // straight to the next player, which meant an item already in an
       // enemy's hand the first time they were scanned could never alert
       // for that item again (the per-match dedup treated it as already
-      // reported). Leaving seenImportantItems untouched here lets the
+      // reported). Leaving importantItemAlertedAt untouched here lets the
       // normal detection logic below run on this same, first, tick.
       tracked.armor = player.armor;
       tracked.highestSwordTier = classifySwordTier(player.heldItem);
@@ -967,8 +1034,9 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
     if (options.armor && armorRank(player.armor) > armorRank(tracked.armor)) {
       const std::string tail = std::string(" now has ") +
                                armorTierName(player.armor) + " Armor";
-      emit(tracked, PlayerAlert::Kind::Armor, player.entityId,
-           player.team, playerText(player, tail), playerSegments(player, tail));
+      emit(tracked, PlayerAlert::Kind::Armor, armorTierName(player.armor),
+           player.entityId, player.team, playerText(player, tail),
+           playerSegments(player, tail));
     }
     if (options.upgrades && player.heldItem.enchanted &&
         isSword(player.heldItem)) {
@@ -976,8 +1044,8 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
       if (teams && teams->observeSharpness(player.team, now)) {
         const std::string tail = std::string(" revealed ") +
                                  teamName(player.team) + " Team's Sharpness";
-        emit(tracked, PlayerAlert::Kind::Upgrade, player.entityId, player.team,
-             playerText(player, tail),
+        emit(tracked, PlayerAlert::Kind::Upgrade, "sharpness", player.entityId,
+             player.team, playerText(player, tail),
              {{player.identity, teamArgb(player.team)},
               {" revealed ", 0xFFE0E0E0U},
               {std::string(teamName(player.team)) + " Team",
@@ -988,46 +1056,100 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
         ++m_diagnostics.sharpnessDuplicates;
       }
     }
+    // Enemy Protection is never announced anywhere a client can read it --
+    // the purchase message only goes to the buying team. The one thing it
+    // does leave behind is a glint on every piece of that team's armour, and
+    // armour is worn constantly rather than swapped like a sword, so this is
+    // a steadier read than the Sharpness one it sits next to.
+    if (options.upgrades && player.armorEnchanted &&
+        player.armor != ArmorTier::None) {
+      ++m_diagnostics.observedArmorGlints;
+      if (teams && teams->observeProtection(player.team, now)) {
+        const std::string tail = std::string(" revealed ") +
+                                 teamName(player.team) + " Team's Protection";
+        emit(tracked, PlayerAlert::Kind::Upgrade, "protection",
+             player.entityId, player.team, playerText(player, tail),
+             {{player.identity, teamArgb(player.team)},
+              {" revealed ", 0xFFE0E0E0U},
+              {std::string(teamName(player.team)) + " Team",
+               teamArgb(player.team)},
+              {"'s Protection", 0xFFE0E0E0U}},
+             false);
+      } else if (teams) {
+        ++m_diagnostics.protectionDuplicates;
+      }
+    }
     const ImportantItem importantItem = classifyImportantItem(player.heldItem);
     const auto importantIndex = static_cast<std::size_t>(importantItem);
     const PotionKind potion = classifyPotion(player.heldItem);
     const std::string consumableName = readableItemName(player.heldItem);
+
+    // "Have they just switched to this?" Only a switch counts as news, so an
+    // enemy who simply keeps an item in hand never re-alerts, while the same
+    // item picked up again later does. tracked.heldItem is still the previous
+    // observation at this point -- it is only overwritten at the end of the
+    // loop body -- which is exactly what makes this comparison meaningful.
+    const bool switchedTo =
+        classifyImportantItem(tracked.heldItem) != importantItem;
+
+    // Should this item be reported? Yes if it has never been reported, or if
+    // it was reported long enough ago AND they are holding it afresh rather
+    // than having kept it in hand the whole time.
+    auto itemIsNews = [&](std::size_t index) {
+      if (index >= tracked.importantItemAlertedAt.size())
+        return false;
+      const Tick last = tracked.importantItemAlertedAt[index];
+      if (last == 0)
+        return true;
+      if (!switchedTo)
+        return false;
+      // A clock that has gone backwards means the match state was rebuilt
+      // under us; treat the old timestamp as stale rather than trusting a
+      // negative interval.
+      if (now < last)
+        return true;
+      return now - last >= kImportantItemRepeatMs;
+    };
+
+    auto markItemReported = [&](std::size_t index) {
+      if (index < tracked.importantItemAlertedAt.size())
+        tracked.importantItemAlertedAt[index] = now;
+    };
+
     const bool consumeStarted =
         options.consumes && player.usingItem && !tracked.usingItem &&
         isConsumable(consumableName);
     if (consumeStarted && !consumableName.empty()) {
       const std::string tail = " is using " + consumableName;
-      emit(tracked, PlayerAlert::Kind::Consume, player.entityId,
+      emit(tracked, PlayerAlert::Kind::Consume, consumableName, player.entityId,
            player.team, playerText(player, tail), playerSegments(player, tail));
       // When both modules are enabled, the stronger use signal replaces the
       // same-tick held-item alert and prevents a delayed duplicate.
-      if (importantIndex < tracked.seenImportantItems.size())
-        tracked.seenImportantItems[importantIndex] = true;
+      markItemReported(importantIndex);
     }
     if (options.items && !consumeStarted && potion != PotionKind::Unknown) {
       ++m_diagnostics.classifiedPotions;
-      if (importantIndex < tracked.seenImportantItems.size() &&
-          !tracked.seenImportantItems[importantIndex]) {
-        tracked.seenImportantItems[importantIndex] = true;
+      if (itemIsNews(importantIndex)) {
+        markItemReported(importantIndex);
         const std::string tail =
             std::string(potion == PotionKind::Invisibility
                             ? " is holding an "
                             : " is holding a ") +
             potionName(potion) + " Potion";
-        emit(tracked, PlayerAlert::Kind::Potion, player.entityId, player.team,
-             playerText(player, tail), playerSegments(player, tail), false);
+        emit(tracked, PlayerAlert::Kind::Potion, potionName(potion),
+             player.entityId, player.team, playerText(player, tail),
+             playerSegments(player, tail), false);
       } else {
         ++m_diagnostics.potionDuplicates;
       }
     }
     if (options.items && isKnockbackStick(player.heldItem)) {
       ++m_diagnostics.classifiedKnockback;
-      if (importantIndex < tracked.seenImportantItems.size() &&
-          !tracked.seenImportantItems[importantIndex]) {
-        tracked.seenImportantItems[importantIndex] = true;
+      if (itemIsNews(importantIndex)) {
+        markItemReported(importantIndex);
         const std::string tail = " has a Knockback Stick";
-        emit(tracked, PlayerAlert::Kind::KnockbackStick, player.entityId,
-             player.team, playerText(player, tail),
+        emit(tracked, PlayerAlert::Kind::KnockbackStick, "knockback stick",
+             player.entityId, player.team, playerText(player, tail),
              playerSegments(player, tail), false);
       } else {
         ++m_diagnostics.knockbackDuplicates;
@@ -1038,27 +1160,29 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
         static_cast<int>(swordTier) > static_cast<int>(tracked.highestSwordTier);
     if (swordUpgraded)
       tracked.highestSwordTier = swordTier;
-    if (options.items && swordUpgraded &&
-        (swordTier == SwordTier::Iron || swordTier == SwordTier::Diamond)) {
+    // Stone counts. Everyone starts on wood, so a stone sword is already a
+    // real change in what that player can do to you, and leaving it out was
+    // why buying a stone sword produced no alert at all.
+    if (options.items && swordUpgraded && swordTier != SwordTier::None &&
+        swordTier != SwordTier::Wood) {
       const std::string tail =
-          std::string(" upgraded to an ") + importantItemName(importantItem);
-      emit(tracked, PlayerAlert::Kind::Item, player.entityId, player.team,
-           playerText(player, tail), playerSegments(player, tail), false);
-      if (importantIndex < tracked.seenImportantItems.size())
-        tracked.seenImportantItems[importantIndex] = true;
+          std::string(" upgraded to ") + importantItemName(importantItem);
+      emit(tracked, PlayerAlert::Kind::Item, importantItemName(importantItem),
+           player.entityId, player.team, playerText(player, tail),
+           playerSegments(player, tail), false);
+      markItemReported(importantIndex);
     } else if (options.items && !consumeStarted &&
                importantItem != ImportantItem::None &&
                potion == PotionKind::Unknown &&
                !isKnockbackStick(player.heldItem) &&
-               importantItem != ImportantItem::IronSword &&
-               importantItem != ImportantItem::DiamondSword) {
-      if (importantIndex < tracked.seenImportantItems.size() &&
-          !tracked.seenImportantItems[importantIndex]) {
-        tracked.seenImportantItems[importantIndex] = true;
+               swordTier == SwordTier::None) {
+      if (itemIsNews(importantIndex)) {
+        markItemReported(importantIndex);
         const std::string tail =
             std::string(" is holding ") + importantItemName(importantItem);
-        emit(tracked, PlayerAlert::Kind::Item, player.entityId, player.team,
-             playerText(player, tail), playerSegments(player, tail), false);
+        emit(tracked, PlayerAlert::Kind::Item, importantItemName(importantItem),
+             player.entityId, player.team, playerText(player, tail),
+             playerSegments(player, tail), false);
       } else {
         ++m_diagnostics.itemDuplicates;
       }
@@ -1105,6 +1229,42 @@ void PlayerMonitor::reset() {
   m_rejectionDetails.clear();
 }
 
+void PlayerMonitor::forgetPlayerLoadout(const std::string &identity) {
+  if (identity.empty())
+    return;
+  const auto it = m_players.find(identity);
+  if (it == m_players.end())
+    return;
+  TrackedPlayer &tracked = it->second;
+
+  // A Bedwars death only takes what was in the player's inventory. Armor is a
+  // permanent team upgrade: whoever respawns is wearing exactly the armor they
+  // died in, so dropping the armor baseline here would re-alert gear the user
+  // has already been told about, once per death, for the rest of the match.
+  // Keep tracked.armor -- it is what the armor rule actually dedups against.
+  //
+  // Everything else really is gone. They respawn with the default wooden sword
+  // and an empty inventory, so the sword tier, the held item and the
+  // per-match "already reported this item" flags all have to be cleared, or a
+  // re-bought diamond sword or a second invisibility potion would stay silent
+  // for the rest of the game.
+  tracked.heldItem = {};
+  tracked.usingItem = false;
+  tracked.highestSwordTier = SwordTier::None;
+  tracked.importantItemAlertedAt.fill(0);
+
+  // The alert cooldowns are per-kind. Clear the loadout-driven ones so a
+  // fresh sighting is not swallowed by a cooldown started before the death,
+  // but keep the armor slot in step with the armor baseline above.
+  constexpr auto armorSlot = static_cast<std::size_t>(PlayerAlert::Kind::Armor);
+  TrackedPlayer::AlertMemory armorMemory;
+  if (armorSlot < tracked.lastAlert.size())
+    armorMemory = tracked.lastAlert[armorSlot];
+  tracked.lastAlert.fill({});
+  if (armorSlot < tracked.lastAlert.size())
+    tracked.lastAlert[armorSlot] = armorMemory;
+}
+
 void PlayerMonitor::forgetPlayer(const std::string &identity) {
   if (identity.empty())
     return;
@@ -1116,153 +1276,6 @@ void PlayerMonitor::forgetPlayer(const std::string &identity) {
   const auto ownerIt = m_entityOwners.find(entityId);
   if (ownerIt != m_entityOwners.end() && ownerIt->second == identity)
     m_entityOwners.erase(ownerIt);
-}
-
-BedDistanceResult evaluateBedDistance(const std::optional<BlockPosition> &bed,
-                                      double playerX, double playerY,
-                                      double playerZ, double warningRange) {
-  if (!bed || !std::isfinite(playerX) || !std::isfinite(playerY) ||
-      !std::isfinite(playerZ) || !std::isfinite(warningRange))
-    return {};
-  const double dx = playerX - static_cast<double>(bed->x);
-  const double dy = playerY - static_cast<double>(bed->y);
-  const double dz = playerZ - static_cast<double>(bed->z);
-  const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
-  const double threshold = std::clamp(warningRange, 1.0, 256.0);
-  return {true, distance, distance > threshold};
-}
-
-bool operator==(const BlockPosition &left, const BlockPosition &right) {
-  return left.x == right.x && left.y == right.y && left.z == right.z;
-}
-
-std::array<BlockPosition, 8> obsidianShell(const OwnBed &bed) {
-  const BlockPosition &a = bed.head;
-  const BlockPosition &b = bed.foot;
-  const int dx = (b.x > a.x) - (b.x < a.x);
-  const int dz = (b.z > a.z) - (b.z < a.z);
-  const int sideX = dz;
-  const int sideZ = -dx;
-  return {{{a.x, a.y + 1, a.z},
-           {b.x, b.y + 1, b.z},
-           {a.x + sideX, a.y, a.z + sideZ},
-           {b.x + sideX, b.y, b.z + sideZ},
-           {a.x - sideX, a.y, a.z - sideZ},
-           {b.x - sideX, b.y, b.z - sideZ},
-           {a.x - dx, a.y, a.z - dz},
-           {b.x + dx, b.y, b.z + dz}}};
-}
-
-bool isValidObsidianShellPosition(const OwnBed &bed,
-                                  const BlockPosition &position) {
-  if (!bed.confident || !bed.alive || bed.team == TeamId::Unknown ||
-      bed.head.y != bed.foot.y)
-    return false;
-  const int dx = std::abs(bed.head.x - bed.foot.x);
-  const int dz = std::abs(bed.head.z - bed.foot.z);
-  if (dx + dz != 1)
-    return false;
-  for (const auto &allowed : obsidianShell(bed))
-    if (allowed == position)
-      return true;
-  return false;
-}
-
-const char *antiMisplaceStatusName(AntiMisplaceStatus status) {
-  switch (status) {
-  case AntiMisplaceStatus::Disabled: return "Disabled";
-  case AntiMisplaceStatus::NotInActiveMatch:
-    return "Not in active Bedwars match";
-  case AntiMisplaceStatus::PlacementHookUnavailable:
-    return "Placement hook unavailable";
-  case AntiMisplaceStatus::WaitingForTeam: return "Waiting for team";
-  case AntiMisplaceStatus::WaitingForOwnBed: return "Waiting for own bed";
-  case AntiMisplaceStatus::OwnBedDestroyed: return "Own bed destroyed";
-  case AntiMisplaceStatus::Ready: return "Ready";
-  default: return "Placement hook unavailable";
-  }
-}
-
-AntiMisplaceStatus antiMisplaceStatus(
-    const PlacementObservation &observation) {
-  if (!observation.masterEnabled || !observation.moduleEnabled)
-    return AntiMisplaceStatus::Disabled;
-  if (!observation.activeMatch)
-    return AntiMisplaceStatus::NotInActiveMatch;
-  if (!observation.hookAvailable)
-    return AntiMisplaceStatus::PlacementHookUnavailable;
-  if (observation.ownBedDestroyed)
-    return AntiMisplaceStatus::OwnBedDestroyed;
-  if (observation.localTeam == TeamId::Unknown)
-    return AntiMisplaceStatus::WaitingForTeam;
-  if (!observation.ownBed || !observation.ownBed->confident)
-    return AntiMisplaceStatus::WaitingForOwnBed;
-  if (!observation.ownBed->alive)
-    return AntiMisplaceStatus::OwnBedDestroyed;
-  if (!observation.worldCurrent ||
-      observation.ownBed->team != observation.localTeam)
-    return AntiMisplaceStatus::WaitingForOwnBed;
-  return AntiMisplaceStatus::Ready;
-}
-
-BlockPosition resultingPlacementPosition(const BlockPosition &target,
-                                         const BlockPosition &faceOffset,
-                                         bool targetReplaceable) {
-  if (targetReplaceable)
-    return target;
-  return {target.x + faceOffset.x, target.y + faceOffset.y,
-          target.z + faceOffset.z};
-}
-
-PlacementDecision evaluateObsidianPlacement(
-    const PlacementObservation &observation) {
-  if (!observation.masterEnabled) return {false, "master disabled"};
-  if (!observation.moduleEnabled) return {false, "module disabled"};
-  if (!observation.hookAvailable) return {false, "hook unavailable"};
-  if (!observation.activeMatch) return {false, "match inactive"};
-  if (!observation.obsidianHeld) return {false, "non-obsidian item"};
-  if (observation.ownBedDestroyed) return {false, "own bed destroyed"};
-  if (!observation.worldCurrent) return {false, "stale world state"};
-  if (!observation.targetKnown) return {false, "placement target unknown"};
-  if (!observation.ownBed || !observation.ownBed->confident)
-    return {false, "own bed unknown"};
-  if (!observation.ownBed->alive)
-    return {false, "own bed destroyed"};
-  if (observation.localTeam == TeamId::Unknown ||
-      observation.ownBed->team != observation.localTeam)
-    return {false, "bed ownership uncertain"};
-  if (isValidObsidianShellPosition(*observation.ownBed,
-                                   observation.resultingPosition))
-    return {false, "valid shell position"};
-  return {true, "outside own-bed shell"};
-}
-
-bool cancellationPreventsPlacementAction(const PlacementDecision &decision,
-                                         bool atPacketBoundary) {
-  return decision.cancel && atPacketBoundary;
-}
-
-bool controllerResultForCancelledPlacement() {
-  return false;
-}
-
-bool callerFallbackForCancelledPlacement() {
-  return false;
-}
-
-bool canPublishBedScanResult(std::uint64_t scanGeneration,
-                             std::uint64_t currentGeneration, bool enabled,
-                             bool cancellationRequested) {
-  return enabled && !cancellationRequested && scanGeneration != 0 &&
-         scanGeneration == currentGeneration;
-}
-
-bool shouldPreventPlacement(const std::optional<BlockPosition> &ownBed,
-                            const BlockPosition &placedBlock) {
-  if (!ownBed)
-    return false;
-  return placedBlock.x == ownBed->x && placedBlock.z == ownBed->z &&
-         placedBlock.y == ownBed->y + 1;
 }
 
 HeightResult evaluateHeight(double playerY,
@@ -1301,8 +1314,7 @@ void NotificationTimeline::expire(Tick now) {
 
 const char *hudName(HudId hud) {
   static constexpr std::array<const char *, kHudCount> names = {
-      "Event Timer", "Height", "Resources", "Team State", "Bed Distance",
-      "Bed Status"};
+      "Event Timer", "Height", "Resources", "Team State"};
   const auto index = static_cast<std::size_t>(hud);
   return names[index < names.size() ? index : 0];
 }

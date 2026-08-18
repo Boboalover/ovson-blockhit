@@ -67,7 +67,6 @@ set(OVSON_SOURCES
     ClickGUI/Tabs/Utils.cpp
     ClickGUI/Tabs/Visuals.cpp
     JavaHook/JavaHook.cpp
-    JavaHook/BedwarsPlacementHook.cpp
     Plugins/PluginLoader.cpp
     Utils/Logger.cpp
     Utils/CrashDump.cpp
@@ -82,16 +81,13 @@ set(OVSON_SOURCES
     Render/GL.cpp
     Render/StatsOverlay.cpp
     Render/RenderHook.cpp
-    Render/DefenseRenderer.cpp
     Render/NameTagRenderer.cpp
-    Render/TextureLoader.cpp
     Render/NotificationManager.cpp
     Render/RenderUtils.cpp
     Render/Shader.cpp
     Render/TechOverlay.cpp
-    Logic/BedDefense/BedDefenseManager.cpp
-    Logic/BedDefense/BlockHook.cpp
     Logic/AutoGG.cpp
+    Utils/StbImageImpl.cpp
     Utils/Timer.cpp
     Utils/ChatBypasser.cpp
     Utils/ThreadTracker.cpp
@@ -131,7 +127,6 @@ set(OVSON_HEADERS
     ClickGUI/Tabs/Tabs.h
     ClickGUI/Theme.h
     JavaHook/JavaHook.h
-    JavaHook/BedwarsPlacementHook.h
     Plugins/PluginLoader.h
     Utils/Logger.h
     Utils/SensitivityFix.h
@@ -148,15 +143,11 @@ set(OVSON_HEADERS
     Render/GL.h
     Render/StatsOverlay.h
     Render/RenderHook.h
-    Render/DefenseRenderer.h
     Render/NameTagRenderer.h
     Render/NotificationManager.h
     Render/RenderUtils.h
     Render/Shader.h
-    Render/TextureLoader.h
     Render/TechOverlay.h
-    Logic/BedDefense/BedDefenseManager.h
-    Logic/BedDefense/BlockHook.h
     Logic/AutoGG.h
     Logic/PacketHook.h
     Logic/BlockHitSound.h
@@ -189,7 +180,6 @@ if(MSVC)
         Logic/HypixelGameState.cpp
         Logic/PacketHook.cpp
         Logic/StatsPoll.cpp
-        Logic/BedDefense/BedDefenseManager.cpp
         Logic/Bedwars/BedwarsConfig.cpp
         Logic/Bedwars/BedwarsCore.cpp
         Logic/Bedwars/BedwarsMaps.cpp
@@ -197,12 +187,10 @@ if(MSVC)
         Logic/BlockHitAudio.cpp
         Logic/BlockHitAudioBackend.cpp
         Logic/BlockHitSound.cpp
-        Render/DefenseRenderer.cpp
         Render/NotificationManager.cpp
         Render/RenderHook.cpp
         Render/BedwarsOverlay.cpp
         ClickGUI/Tabs/Bedwars.cpp
-        JavaHook/BedwarsPlacementHook.cpp
         PROPERTIES COMPILE_OPTIONS "/W4"
     )
 endif()

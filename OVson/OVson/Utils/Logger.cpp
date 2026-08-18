@@ -157,17 +157,11 @@ void Logger::log(Config::DebugCategory cat, const char *fmt, ...) {
   case Config::DebugCategory::GameDetection:
     level = "GAME_DETECTION";
     break;
-  case Config::DebugCategory::BedDetection:
-    level = "BED_DETECTION";
-    break;
   case Config::DebugCategory::Urchin:
     level = "URCHIN";
     break;
   case Config::DebugCategory::GUI:
     level = "GUI";
-    break;
-  case Config::DebugCategory::BedDefense:
-    level = "BED_DEFENSE";
     break;
   }
 

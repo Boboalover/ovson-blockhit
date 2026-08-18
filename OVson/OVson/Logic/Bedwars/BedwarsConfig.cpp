@@ -8,7 +8,6 @@
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
-#include <vector>
 
 namespace OVson::Bedwars::Configuration {
 namespace {
@@ -78,35 +77,6 @@ int readInt(const std::unordered_map<std::string, std::string> &pairs,
   }
 }
 
-std::unordered_map<std::string, int>
-readMapOverrides(const std::unordered_map<std::string, std::string> &pairs) {
-  std::unordered_map<std::string, int> result;
-  const auto it = pairs.find("mapOverrides");
-  if (it == pairs.end())
-    return result;
-  std::size_t start = 0;
-  while (start < it->second.size() && result.size() < 64) {
-    const std::size_t end = it->second.find('|', start);
-    const std::string entry = it->second.substr(start, end - start);
-    const std::size_t colon = entry.rfind(':');
-    if (colon != std::string::npos) {
-      const std::string map = normalizeMapName(entry.substr(0, colon));
-      try {
-        std::size_t consumed = 0;
-        const int value = std::stoi(entry.substr(colon + 1), &consumed);
-        if (!map.empty() && consumed == entry.size() - colon - 1 &&
-            value >= 1 && value <= 511)
-          result[map] = value;
-      } catch (...) {
-      }
-    }
-    if (end == std::string::npos)
-      break;
-    start = end + 1;
-  }
-  return result;
-}
-
 void ensureInitializedLocked() {
   if (g_initialized)
     return;
@@ -133,8 +103,6 @@ Settings::Settings() {
   hud[static_cast<std::size_t>(HudId::Height)] = {false, 0.02F, 0.34F, 1.0F};
   hud[static_cast<std::size_t>(HudId::Resource)] = {false, 0.78F, 0.44F, 1.0F};
   hud[static_cast<std::size_t>(HudId::TeamState)] = {false, 0.78F, 0.18F, 1.0F};
-  hud[static_cast<std::size_t>(HudId::BedDistance)] = {false, 0.02F, 0.62F, 1.0F};
-  hud[static_cast<std::size_t>(HudId::BedStatus)] = {false, 0.78F, 0.64F, 1.0F};
 }
 
 bool Settings::enabled(Module module) const {
@@ -199,18 +167,6 @@ bool isOnlyNextEvent() { return get().onlyNextEvent; }
 void setOnlyNextEvent(bool enabled) {
   mutate([&](Settings &settings) { settings.onlyNextEvent = enabled; });
 }
-bool isDynamicTimerColor() { return get().dynamicTimerColor; }
-void setDynamicTimerColor(bool enabled) {
-  mutate([&](Settings &settings) { settings.dynamicTimerColor = enabled; });
-}
-bool isDynamicHeightColor() { return get().dynamicHeightColor; }
-void setDynamicHeightColor(bool enabled) {
-  mutate([&](Settings &settings) { settings.dynamicHeightColor = enabled; });
-}
-bool isShortUpgradeLabels() { return get().shortUpgradeLabels; }
-void setShortUpgradeLabels(bool enabled) {
-  mutate([&](Settings &settings) { settings.shortUpgradeLabels = enabled; });
-}
 bool isResourceHudEnabled() {
   return get().hud[static_cast<std::size_t>(HudId::Resource)].visible;
 }
@@ -218,12 +174,6 @@ void setResourceHudEnabled(bool enabled) {
   mutate([&](Settings &settings) {
     settings.resourceHud = enabled;
     settings.hud[static_cast<std::size_t>(HudId::Resource)].visible = enabled;
-  });
-}
-bool isStackedResourceAlerts() { return get().stackedResourceAlerts; }
-void setStackedResourceAlerts(bool enabled) {
-  mutate([&](Settings &settings) {
-    settings.stackedResourceAlerts = enabled;
   });
 }
 bool isResourceEnabled(Resource resource) {
@@ -300,40 +250,27 @@ void setPlayerAlertRange(float range) {
     settings.playerAlertRange = std::clamp(range, 4.0F, 256.0F);
   });
 }
-float getBedWarningRange() { return get().bedWarningRange; }
-void setBedWarningRange(float range) {
-  mutate([&](Settings &settings) {
-    settings.bedWarningRange = std::clamp(range, 5.0F, 128.0F);
-  });
-}
-float getBedMaximumRange() { return get().bedMaximumRange; }
-void setBedMaximumRange(float range) {
-  mutate([&](Settings &settings) {
-    settings.bedMaximumRange = std::clamp(range, 16.0F, 160.0F);
-  });
-}
-int getBedScanIntervalMs() { return get().bedScanIntervalMs; }
-void setBedScanIntervalMs(int interval) {
-  mutate([&](Settings &settings) {
-    settings.bedScanIntervalMs = std::clamp(interval, 5000, 30000);
-  });
-}
 int getHeightLimitOverride() { return get().heightLimitOverride; }
 void setHeightLimitOverride(int limit) {
   mutate([&](Settings &settings) {
     settings.heightLimitOverride = std::clamp(limit, 0, 512);
   });
 }
-int getPlayerAlertCooldownMs() { return get().playerAlertCooldownMs; }
-void setPlayerAlertCooldownMs(int cooldown) {
-  mutate([&](Settings &settings) {
-    settings.playerAlertCooldownMs = std::clamp(cooldown, 250, 60000);
-  });
-}
 int getTrapReminderSeconds() { return get().trapReminderSeconds; }
 void setTrapReminderSeconds(int seconds) {
   mutate([&](Settings &settings) {
     settings.trapReminderSeconds = std::clamp(seconds, 15, 600);
+  });
+}
+
+AlertOutput getAlertOutput() { return get().alertOutput; }
+void setAlertOutput(AlertOutput output) {
+  mutate([&](Settings &settings) {
+    const auto value = static_cast<std::size_t>(output);
+    settings.alertOutput =
+        value <= static_cast<std::size_t>(AlertOutput::Both)
+            ? output
+            : AlertOutput::Overlay;
   });
 }
 
@@ -345,12 +282,6 @@ void setVisibilityMode(VisibilityMode mode) {
         value <= static_cast<std::size_t>(VisibilityMode::CameraView)
             ? mode
             : VisibilityMode::LineOfSight;
-  });
-}
-float getCameraViewDegrees() { return get().cameraViewDegrees; }
-void setCameraViewDegrees(float degrees) {
-  mutate([&](Settings &settings) {
-    settings.cameraViewDegrees = std::clamp(degrees, 30.0F, 170.0F);
   });
 }
 HudLayout getHudLayout(HudId hud) {
@@ -375,66 +306,16 @@ void resetAllHudLayouts() {
   const Settings defaults;
   mutate([&](Settings &settings) { settings.hud = defaults.hud; });
 }
-float getDefaultNotificationSeconds() { return get().defaultNotificationSeconds; }
-void setDefaultNotificationSeconds(float seconds) {
-  mutate([&](Settings &settings) {
-    settings.defaultNotificationSeconds = std::clamp(seconds, 1.0F, 15.0F);
-  });
-}
-float getImportantNotificationSeconds() { return get().importantNotificationSeconds; }
-void setImportantNotificationSeconds(float seconds) {
-  mutate([&](Settings &settings) {
-    settings.importantNotificationSeconds = std::clamp(seconds, 1.0F, 15.0F);
-  });
-}
-float getPlayerNotificationSeconds() { return get().playerNotificationSeconds; }
-void setPlayerNotificationSeconds(float seconds) {
-  mutate([&](Settings &settings) {
-    settings.playerNotificationSeconds = std::clamp(seconds, 1.0F, 15.0F);
-  });
-}
-float getWarningNotificationSeconds() { return get().warningNotificationSeconds; }
-void setWarningNotificationSeconds(float seconds) {
-  mutate([&](Settings &settings) {
-    settings.warningNotificationSeconds = std::clamp(seconds, 1.0F, 15.0F);
-  });
-}
-int getMaximumVisibleNotifications() { return get().maximumVisibleNotifications; }
-void setMaximumVisibleNotifications(int maximum) {
-  mutate([&](Settings &settings) {
-    settings.maximumVisibleNotifications = std::clamp(maximum, 1, 10);
-  });
-}
-void setMapPlacementOverride(const std::string &mapName, int placementY) {
-  const std::string normalized = normalizeMapName(mapName);
-  if (normalized.empty())
-    return;
-  mutate([&](Settings &settings) {
-    if (settings.mapPlacementOverrides.size() >= 64 &&
-        settings.mapPlacementOverrides.find(normalized) ==
-            settings.mapPlacementOverrides.end())
-      return;
-    settings.mapPlacementOverrides[normalized] = std::clamp(placementY, 1, 511);
-  });
-}
-void resetMapPlacementOverride(const std::string &mapName) {
-  const std::string normalized = normalizeMapName(mapName);
-  mutate([&](Settings &settings) { settings.mapPlacementOverrides.erase(normalized); });
-}
 
 std::string serialize(const Settings &settings) {
   std::ostringstream out;
   out << std::fixed << std::setprecision(3);
-  out << "version=3;master=" << settings.masterEnabled << ';';
+  out << "version=4;master=" << settings.masterEnabled << ';';
   for (std::size_t i = 0; i < kModuleCount; ++i)
     out << moduleKey(static_cast<Module>(i)) << '=' << settings.modules[i] << ';';
   out << "debug=" << settings.debug << ";sounds=" << settings.sounds
       << ";onlyNextEvent=" << settings.onlyNextEvent
-      << ";dynamicTimerColor=" << settings.dynamicTimerColor
-      << ";dynamicHeightColor=" << settings.dynamicHeightColor
-      << ";shortUpgradeLabels=" << settings.shortUpgradeLabels
       << ";resourceHud=" << settings.resourceHud
-      << ";stackedResourceAlerts=" << settings.stackedResourceAlerts
       << ";resourceIron=" << settings.resources[0]
       << ";resourceGold=" << settings.resources[1]
       << ";resourceDiamond=" << settings.resources[2]
@@ -445,19 +326,10 @@ std::string serialize(const Settings &settings) {
       << ";heightX=" << settings.heightX << ";heightY=" << settings.heightY
       << ";heightScale=" << settings.heightScale
       << ";heightLimitOverride=" << settings.heightLimitOverride
-      << ";bedWarningRange=" << settings.bedWarningRange
-      << ";bedMaximumRange=" << settings.bedMaximumRange
-      << ";bedScanIntervalMs=" << settings.bedScanIntervalMs
       << ";playerAlertRange=" << settings.playerAlertRange
-      << ";playerAlertCooldownMs=" << settings.playerAlertCooldownMs
       << ";trapReminderSeconds=" << settings.trapReminderSeconds
       << ";visibilityMode=" << static_cast<int>(settings.visibilityMode)
-      << ";cameraViewDegrees=" << settings.cameraViewDegrees
-      << ";notificationDefault=" << settings.defaultNotificationSeconds
-      << ";notificationImportant=" << settings.importantNotificationSeconds
-      << ";notificationPlayer=" << settings.playerNotificationSeconds
-      << ";notificationWarning=" << settings.warningNotificationSeconds
-      << ";notificationMaximum=" << settings.maximumVisibleNotifications
+      << ";alertOutput=" << static_cast<int>(settings.alertOutput)
       << ';';
   for (std::size_t i = 0; i < kHudCount; ++i) {
     const auto &hud = settings.hud[i];
@@ -465,28 +337,16 @@ std::string serialize(const Settings &settings) {
         << "X=" << hud.x << ";hud" << i << "Y=" << hud.y << ";hud" << i
         << "Scale=" << hud.scale << ';';
   }
-  std::vector<std::pair<std::string, int>> overrides(
-      settings.mapPlacementOverrides.begin(),
-      settings.mapPlacementOverrides.end());
-  std::sort(overrides.begin(), overrides.end());
-  out << "mapOverrides=";
-  for (std::size_t i = 0; i < overrides.size() && i < 64; ++i) {
-    if (i != 0)
-      out << '|';
-    out << normalizeMapName(overrides[i].first) << ':'
-        << std::clamp(overrides[i].second, 1, 511);
-  }
-  out << ';';
   return out.str();
 }
 
 Settings deserialize(const std::string &data) {
   Settings settings;
   const auto pairs = parsePairs(data);
-  // An empty file is a fresh v3 configuration.  Only persisted legacy data
+  // An empty file is a fresh v4 configuration.  Only persisted legacy data
   // without a version marker should receive the v1 compatibility defaults.
-  const int version = data.empty() ? 3 : readInt(pairs, "version", 1, 1, 3);
-  settings.formatVersion = 3;
+  const int version = data.empty() ? 4 : readInt(pairs, "version", 1, 1, 4);
+  settings.formatVersion = 4;
   settings.masterEnabled = readBool(pairs, "master", false);
   for (std::size_t i = 0; i < kModuleCount; ++i)
     settings.modules[i] =
@@ -496,12 +356,7 @@ Settings deserialize(const std::string &data) {
   settings.debug = readBool(pairs, "debug", false);
   settings.sounds = readBool(pairs, "sounds", true);
   settings.onlyNextEvent = readBool(pairs, "onlyNextEvent", true);
-  settings.dynamicTimerColor = readBool(pairs, "dynamicTimerColor", true);
-  settings.dynamicHeightColor = readBool(pairs, "dynamicHeightColor", true);
-  settings.shortUpgradeLabels = readBool(pairs, "shortUpgradeLabels", true);
   settings.resourceHud = readBool(pairs, "resourceHud", false);
-  settings.stackedResourceAlerts =
-      readBool(pairs, "stackedResourceAlerts", true);
   settings.resources[0] = readBool(pairs, "resourceIron", true);
   settings.resources[1] = readBool(pairs, "resourceGold", true);
   settings.resources[2] = readBool(pairs, "resourceDiamond", true);
@@ -516,16 +371,8 @@ Settings deserialize(const std::string &data) {
   settings.heightScale = readFloat(pairs, "heightScale", 1.0F, 0.5F, 2.5F);
   settings.heightLimitOverride =
       readInt(pairs, "heightLimitOverride", 0, 0, 512);
-  settings.bedWarningRange =
-      readFloat(pairs, "bedWarningRange", 40.0F, 5.0F, 128.0F);
-  settings.bedMaximumRange =
-      readFloat(pairs, "bedMaximumRange", 96.0F, 16.0F, 160.0F);
-  settings.bedScanIntervalMs =
-      readInt(pairs, "bedScanIntervalMs", 10000, 5000, 30000);
   settings.playerAlertRange =
       readFloat(pairs, "playerAlertRange", 32.0F, 4.0F, 256.0F);
-  settings.playerAlertCooldownMs =
-      readInt(pairs, "playerAlertCooldownMs", 2500, 250, 60000);
   settings.trapReminderSeconds =
       readInt(pairs, "trapReminderSeconds", 90, 15, 600);
   settings.visibilityMode = static_cast<VisibilityMode>(readInt(
@@ -534,18 +381,10 @@ Settings deserialize(const std::string &data) {
                    : static_cast<int>(VisibilityMode::LineOfSight),
       static_cast<int>(VisibilityMode::RangeOnly),
       static_cast<int>(VisibilityMode::CameraView)));
-  settings.cameraViewDegrees =
-      readFloat(pairs, "cameraViewDegrees", 100.0F, 30.0F, 170.0F);
-  settings.defaultNotificationSeconds =
-      readFloat(pairs, "notificationDefault", 3.0F, 1.0F, 15.0F);
-  settings.importantNotificationSeconds =
-      readFloat(pairs, "notificationImportant", 5.0F, 1.0F, 15.0F);
-  settings.playerNotificationSeconds =
-      readFloat(pairs, "notificationPlayer", 4.0F, 1.0F, 15.0F);
-  settings.warningNotificationSeconds =
-      readFloat(pairs, "notificationWarning", 5.0F, 1.0F, 15.0F);
-  settings.maximumVisibleNotifications =
-      readInt(pairs, "notificationMaximum", 5, 1, 10);
+  settings.alertOutput = static_cast<AlertOutput>(
+      readInt(pairs, "alertOutput", static_cast<int>(AlertOutput::Overlay),
+              static_cast<int>(AlertOutput::Overlay),
+              static_cast<int>(AlertOutput::Both)));
   for (std::size_t i = 0; i < kHudCount; ++i) {
     const std::string prefix = "hud" + std::to_string(i);
     settings.hud[i].visible =
@@ -569,8 +408,6 @@ Settings deserialize(const std::string &data) {
         settings.modules[static_cast<std::size_t>(Module::ResourceTracker)];
     settings.hud[static_cast<std::size_t>(HudId::TeamState)].visible =
         settings.modules[static_cast<std::size_t>(Module::UpgradeHud)];
-    settings.hud[static_cast<std::size_t>(HudId::BedDistance)].visible =
-        settings.modules[static_cast<std::size_t>(Module::BedTracker)];
   }
   settings.resourceHud =
       settings.hud[static_cast<std::size_t>(HudId::Resource)].visible;
@@ -581,7 +418,6 @@ Settings deserialize(const std::string &data) {
   settings.heightX = settings.hud[static_cast<std::size_t>(HudId::Height)].x;
   settings.heightY = settings.hud[static_cast<std::size_t>(HudId::Height)].y;
   settings.heightScale = settings.hud[static_cast<std::size_t>(HudId::Height)].scale;
-  settings.mapPlacementOverrides = readMapOverrides(pairs);
   return settings;
 }
 

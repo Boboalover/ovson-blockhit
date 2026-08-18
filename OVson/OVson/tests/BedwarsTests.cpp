@@ -2,7 +2,6 @@
 #include "Logic/Bedwars/BedwarsConfig.h"
 #include "../../OVsonLoader/slint_ui/shutdown_coordinator.h"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 #include <exception>
@@ -377,27 +376,6 @@ void playerMonitorPrunesAndCapsBursts() {
           "match-long item memory was discarded on range exit");
 }
 
-void bedDistanceUnknownAndBoundary() {
-  require(!evaluateBedDistance(std::nullopt, 0, 0, 0, 10).known,
-          "unknown bed became known");
-  BlockPosition bed{0, 0, 0};
-  const auto at = evaluateBedDistance(bed, 3, 4, 0, 5);
-  require(at.known && !at.outsideWarningRange,
-          "bed boundary was treated as outside");
-  require(evaluateBedDistance(bed, 3, 4.001, 0, 5).outsideWarningRange,
-          "outside bed boundary was not detected");
-}
-
-void antiMisplaceRequiresExactKnownPosition() {
-  require(!shouldPreventPlacement(std::nullopt, {0, 1, 0}),
-          "unknown bed blocked placement");
-  BlockPosition bed{5, 60, 8};
-  require(shouldPreventPlacement(bed, {5, 61, 8}),
-          "block directly above bed was not rejected");
-  require(!shouldPreventPlacement(bed, {6, 61, 8}),
-          "adjacent placement was over-blocked");
-}
-
 ResourceSnapshot richInventory() {
   ResourceSnapshot snapshot;
   snapshot.inventoryValid = true;
@@ -442,14 +420,14 @@ void heightKnownAndUnknown() {
 }
 
 void invalidFloatingPointInputsAreSafe() {
-  BlockPosition bed{};
-  require(!evaluateBedDistance(
-               bed, std::numeric_limits<double>::quiet_NaN(), 0, 0, 10)
-               .known,
-          "NaN distance was accepted");
-  require(evaluateHeight(std::numeric_limits<double>::infinity(), 100).currentY ==
-              0,
-          "infinite height was not sanitized");
+  // A player position can arrive as a non-finite double while the world is
+  // still loading. Rendering that straight into the HUD would show garbage, so
+  // the sanitized fallback must win over the raw coordinate.
+  const auto infinite =
+      evaluateHeight(std::numeric_limits<double>::infinity(), 100);
+  require(infinite.currentY == 0, "infinite height was not sanitized");
+  require(infinite.remaining && *infinite.remaining == 100,
+          "sanitized height produced an inconsistent remaining distance");
 }
 
 void configDefaultsAreDisabled() {
@@ -458,54 +436,111 @@ void configDefaultsAreDisabled() {
   for (const bool enabled : settings.modules)
     require(!enabled, "module did not default off");
   require(!settings.debug, "debug did not default off");
+  // The serialized format addresses modules and HUDs positionally, so a change
+  // in either count silently reinterprets every configuration already on disk.
+  require(std::size(settings.modules) == 11U,
+          "module count changed without a configuration format migration");
+  require(kHudCount == 4U,
+          "HUD count changed without a configuration format migration");
 }
 
 void configKeepsUnavailableModulesDisabled() {
+  // Configurations in the wild still carry keys for modules that no longer
+  // exist. An unknown key has to be skipped like any other, and in particular
+  // must not stop the parser from reading the keys that follow it.
   const auto settings = Configuration::deserialize(
-      "master=1;shopHelper=1;antiMisplace=1;bedTracker=1;");
-  require(!settings.modules[static_cast<std::size_t>(Module::ShopHelper)] &&
-              settings.modules[static_cast<std::size_t>(Module::AntiMisplace)] &&
-              settings.modules[static_cast<std::size_t>(Module::BedTracker)],
-          "unavailable modules were enabled from config");
+      "master=1;shopHelper=1;antiMisplace=1;bedTracker=1;eventTimers=1;");
+  require(!settings.modules[static_cast<std::size_t>(Module::ShopHelper)],
+          "unavailable module was enabled from config");
+  require(settings.modules[static_cast<std::size_t>(Module::EventTimers)],
+          "stale module keys swallowed a following known module key");
+  require(settings.masterEnabled, "stale module keys discarded the master flag");
 }
 
 void configRoundTripPreservesNamedSettings() {
+  // Every persisted field is flipped away from its default so that a field the
+  // writer forgets to emit, or the reader forgets to read, cannot pass by
+  // coincidentally matching the default.
+  const Configuration::Settings defaults;
   Configuration::Settings settings;
   settings.masterEnabled = true;
   settings.modules[static_cast<std::size_t>(Module::EventTimers)] = true;
-  settings.modules[static_cast<std::size_t>(Module::BedTracker)] = true;
-  settings.playerAlertRange = 47.0F;
+  settings.modules[static_cast<std::size_t>(Module::ItemAlerts)] = true;
+  settings.debug = !defaults.debug;
+  settings.sounds = !defaults.sounds;
+  settings.onlyNextEvent = !defaults.onlyNextEvent;
+  settings.resourceHud = !defaults.resourceHud;
+  settings.resources[static_cast<std::size_t>(Resource::Iron)] =
+      !defaults.resources[static_cast<std::size_t>(Resource::Iron)];
+  settings.shopDuplicatePrevention = !defaults.shopDuplicatePrevention;
+  settings.timerX = 0.11F;
+  settings.timerY = 0.22F;
+  settings.timerScale = 1.25F;
+  settings.heightX = 0.33F;
+  settings.heightY = 0.44F;
+  settings.heightScale = 1.75F;
   settings.heightLimitOverride = 123;
+  settings.playerAlertRange = 47.0F;
+  settings.trapReminderSeconds = defaults.trapReminderSeconds + 3;
+  settings.visibilityMode = VisibilityMode::CameraView;
+  settings.alertOutput = AlertOutput::Both;
+
   const std::string encoded = Configuration::serialize(settings);
   require(encoded.find("eventTimers=1") != std::string::npos,
           "event timer key is not named");
-  require(encoded.find("bedTracker=1") != std::string::npos,
-          "bed tracker key is not named");
+  require(encoded.find("itemAlerts=1") != std::string::npos,
+          "item alert key is not named");
+
   const auto decoded = Configuration::deserialize(encoded);
+  require(decoded.formatVersion == 4,
+          "serialized configuration did not carry the current format version");
   require(decoded.masterEnabled &&
               decoded.modules[static_cast<std::size_t>(Module::EventTimers)] &&
-              decoded.modules[static_cast<std::size_t>(Module::BedTracker)],
+              decoded.modules[static_cast<std::size_t>(Module::ItemAlerts)],
           "config round trip lost toggles");
+  require(decoded.debug == settings.debug &&
+              decoded.sounds == settings.sounds &&
+              decoded.onlyNextEvent == settings.onlyNextEvent &&
+              decoded.resourceHud == settings.resourceHud &&
+              decoded.shopDuplicatePrevention ==
+                  settings.shopDuplicatePrevention,
+          "config round trip lost a boolean preference");
+  require(decoded.resources[static_cast<std::size_t>(Resource::Iron)] ==
+              settings.resources[static_cast<std::size_t>(Resource::Iron)],
+          "config round trip lost a per-resource preference");
+  require(decoded.timerX == 0.11F && decoded.timerY == 0.22F &&
+              decoded.timerScale == 1.25F && decoded.heightX == 0.33F &&
+              decoded.heightY == 0.44F && decoded.heightScale == 1.75F,
+          "config round trip lost an overlay position or scale");
   require(decoded.playerAlertRange == 47.0F &&
-              decoded.heightLimitOverride == 123,
+              decoded.heightLimitOverride == 123 &&
+              decoded.trapReminderSeconds == settings.trapReminderSeconds,
           "config round trip lost numeric settings");
+  require(decoded.visibilityMode == VisibilityMode::CameraView,
+          "config round trip lost the visibility mode");
+  require(decoded.alertOutput == AlertOutput::Both,
+          "config round trip lost the alert output mode");
 }
 
 void configRejectsMalformedAndClampsRanges() {
+  // The stale bed keys in the middle are deliberate: old configurations still
+  // contain them, and a malformed or unknown key must only cost its own field,
+  // never the well-formed keys that follow it.
   const auto settings = Configuration::deserialize(
       "master=maybe;debug=yes;timerScale=nan;playerAlertRange=9999;"
-      "heightLimitOverride=-20;bedScanIntervalMs=1;bedEspOpacity=-5;"
-      "bedEspRed=999;bedEspGreen=-1;bedEspBlue=broken;timerX=0.5junk;");
+      "heightLimitOverride=-20;bedScanIntervalMs=1;bedWarningRange=12;"
+      "timerY=0.42;bedEspOpacity=-5;bedEspRed=999;bedEspGreen=-1;"
+      "bedEspBlue=broken;timerX=0.5junk;");
   require(!settings.masterEnabled && !settings.debug,
           "malformed booleans were accepted");
   require(settings.timerScale == 1.0F, "NaN was accepted");
   require(settings.timerX == 0.02F, "trailing numeric text was accepted");
+  require(std::abs(settings.timerY - 0.42F) < 0.001F,
+          "a stale key stopped the parser before a valid key");
   require(settings.playerAlertRange == 256.0F,
           "player range was not clamped");
   require(settings.heightLimitOverride == 0,
           "height override was not clamped");
-  require(settings.bedScanIntervalMs == 5000,
-          "scan interval was not clamped");
   require(Configuration::serialize(settings).find("bedEsp") ==
               std::string::npos,
           "removed renderer settings were serialized again");
@@ -734,6 +769,260 @@ void potionClassificationDedupAndTransition() {
           "different potion was suppressed by generic cooldown");
 }
 
+void shopItemsHypixelActuallySellsAreClassified() {
+  // Hypixel's Speed II sets the level-II bit (0x20) on top of the potion type,
+  // so its damage value is 8226 rather than 2. Masking the whole low byte used
+  // to fold that bit into the comparison and the potion fell through as
+  // Unknown, which is why Speed and Jump Boost never alerted while
+  // Invisibility -- the one potion with no level II -- always did.
+  require(classifyPotion({"potion", "Speed Potion", 8226, false}) ==
+              PotionKind::Speed,
+          "Hypixel Speed II metadata did not classify as Speed");
+  require(classifyPotion({"potion", "Jump Potion", 8235, false}) ==
+              PotionKind::Jump,
+          "Hypixel Jump Boost metadata did not classify as Jump");
+  require(classifyPotion({"potion", "Invisibility Potion", 8206, false}) ==
+              PotionKind::Invisibility,
+          "extended Invisibility metadata stopped classifying");
+
+  // The shop stick carries Knockback but the server does not always rename the
+  // stack, so the enchantment alone has to be enough. Nothing else in Bedwars
+  // is an enchanted stick.
+  require(isKnockbackStick({"stick", "Stick", 0, true}),
+          "unnamed enchanted stick was not treated as a knockback stick");
+  require(!isKnockbackStick({"stick", "Stick", 0, false}),
+          "a plain unenchanted stick was treated as a knockback stick");
+
+  // Base item ids are enough for these three: an egg in a Bedwars game is
+  // always a Bridge Egg and a spawn egg is always a Dream Defender.
+  require(classifyImportantItem({"egg", "Bridge Egg", 0, false}) ==
+              ImportantItem::BridgeEgg,
+          "bridge egg was not classified");
+  require(classifyImportantItem({"monsterPlacer", "Dream Defender", 0, false}) ==
+              ImportantItem::DreamDefender,
+          "dream defender spawn egg was not classified");
+  require(classifyImportantItem({"bucketWater", "Water Bucket", 0, false}) ==
+              ImportantItem::WaterBucket,
+          "water bucket was not classified");
+
+  // An enchanted bow is a materially different threat from a plain one, so it
+  // is reported separately rather than collapsing into "Bow".
+  require(classifyImportantItem({"bow", "Bow", 0, false}) == ImportantItem::Bow,
+          "plain bow was not classified");
+  require(classifyImportantItem({"bow", "Bow", 0, true}) ==
+              ImportantItem::EnchantedBow,
+          "enchanted bow was not distinguished from a plain bow");
+
+  require(classifyImportantItem({"swordStone", "Stone Sword", 0, false}) ==
+              ImportantItem::StoneSword,
+          "stone sword was not classified");
+
+  // Magic Milk is an ordinary milk bucket and Ender Pearls are ordinary
+  // pearls, so both are identified by base item alone.
+  require(classifyImportantItem({"milk", "Magic Milk", 0, false}) ==
+              ImportantItem::Milk,
+          "magic milk was not classified");
+  require(std::string(importantItemName(ImportantItem::Milk)) == "Magic Milk",
+          "milk is not reported by the name Hypixel uses for it");
+  require(classifyImportantItem({"enderPearl", "Ender Pearl", 0, false}) ==
+              ImportantItem::EnderPearl,
+          "ender pearl was not classified");
+}
+
+void magicMilkAlertsOnBothHoldingAndDrinking() {
+  PlayerMonitor monitor;
+  PlayerAlertOptions options;
+  options.items = options.consumes = true;
+  options.visibility = VisibilityMode::RangeOnly;
+  options.cooldownMs = 60000;
+
+  auto player = enemy(1, "Steve");
+  monitor.observe({player}, options, 1000);
+
+  // Taking it out is worth knowing on its own: it means they are about to
+  // walk through a trap.
+  player.heldItem = {"milk", "Magic Milk", 0, false};
+  const auto holding = monitor.observe({player}, options, 1100);
+  require(holding.size() == 1 &&
+              holding[0].text.find("Magic Milk") != std::string::npos,
+          "holding magic milk did not alert");
+
+  // Actually drinking it is the stronger signal and has to come through even
+  // though the holding alert already fired for the same item.
+  player.usingItem = true;
+  const auto drinking = monitor.observe({player}, options, 1200);
+  require(drinking.size() == 1 &&
+              drinking[0].kind == PlayerAlert::Kind::Consume &&
+              drinking[0].text.find("is using Magic Milk") != std::string::npos,
+          "drinking magic milk did not produce a consume alert");
+
+  // Still holding it down for several ticks is one drink, not several.
+  require(monitor.observe({player}, options, 1300).empty(),
+          "a single drink produced repeated consume alerts");
+}
+
+void stoneSwordUpgradeAlertsLikeAnyOtherTierJump() {
+  PlayerMonitor monitor;
+  auto options = rangeItemOptions();
+  options.cooldownMs = 60000;
+
+  // Seen first on the starting wooden sword, so wood is the baseline.
+  auto player = enemy(1, "Steve");
+  player.heldItem = {"swordWood", "Wooden Sword", 0, false};
+  monitor.observe({player}, options, 1000);
+
+  // Buying a stone sword is a real change in what they can do to you.
+  // Previously only iron and diamond alerted, so this went unreported.
+  player.heldItem = {"swordStone", "Stone Sword", 0, false};
+  const auto stone = monitor.observe({player}, options, 1100);
+  require(stone.size() == 1 &&
+              stone[0].text.find("Stone Sword") != std::string::npos,
+          "stone sword upgrade did not alert");
+
+  // Tier is monotonic: dropping back to the starting sword is not news, and
+  // must not re-arm the alert either.
+  player.heldItem = {"swordWood", "Wooden Sword", 0, false};
+  require(monitor.observe({player}, options, 1200).empty(),
+          "reverting to the starting sword produced an alert");
+  player.heldItem = {"swordStone", "Stone Sword", 0, false};
+  require(monitor.observe({player}, options, 1300).empty(),
+          "switching back to an already-reported sword tier alerted again");
+
+  // A further jump still alerts.
+  player.heldItem = {"swordDiamond", "Diamond Sword", 0, false};
+  const auto diamond = monitor.observe({player}, options, 1400);
+  require(diamond.size() == 1 &&
+              diamond[0].text.find("Diamond Sword") != std::string::npos,
+          "diamond upgrade after a stone upgrade did not alert");
+}
+
+void reboughtItemsAlertAgainAfterTheRepeatWindow() {
+  PlayerMonitor monitor;
+  auto options = rangeItemOptions();
+  options.cooldownMs = 60000;
+  auto player = enemy(1, "Steve");
+  monitor.observe({player}, options, 1000);
+
+  player.heldItem = {"enderPearl", "Ender Pearl", 0, false};
+  require(monitor.observe({player}, options, 1100).size() == 1,
+          "first ender pearl sighting did not alert");
+
+  // Keeping it in hand is never news again. The repeat window only reopens on
+  // a fresh switch to the item, so standing still with a pearl out can never
+  // turn into a recurring alert.
+  require(monitor.observe({player}, options, 1200).empty(),
+          "an item held continuously re-alerted on its own");
+
+  // Away and back a moment later is the same pearl.
+  player.heldItem = {};
+  monitor.observe({player}, options, 1300);
+  player.heldItem = {"enderPearl", "Ender Pearl", 0, false};
+  require(monitor.observe({player}, options, 1400).empty(),
+          "slot switching re-alerted the same item");
+
+  // Far enough past the last alert it is, in practice, a different pearl:
+  // they threw the first one and bought another. The old dedup was permanent
+  // for the whole match, which is exactly why that second pearl was silent.
+  player.heldItem = {};
+  monitor.observe({player}, options, 1500);
+  player.heldItem = {"enderPearl", "Ender Pearl", 0, false};
+  const auto rebought =
+      monitor.observe({player}, options, 1100 + kImportantItemRepeatMs + 1);
+  require(rebought.size() == 1 &&
+              rebought[0].text.find("Ender Pearl") != std::string::npos,
+          "a re-bought item stayed silent past the repeat window");
+}
+
+void enemyProtectionIsRevealedByArmorGlint() {
+  PlayerMonitor monitor;
+  TeamTracker teams;
+  PlayerAlertOptions options;
+  options.upgrades = true;
+  options.visibility = VisibilityMode::RangeOnly;
+  options.cooldownMs = 60000;
+
+  // Hypixel only announces a team upgrade to the team that bought it, so an
+  // enemy Protection purchase reaches the client exactly once: as a glint on
+  // the armour they are already wearing.
+  auto player = enemy(1, "Steve");
+  player.team = TeamId::Red;
+  player.teamAuthoritative = true;
+  player.armor = ArmorTier::Iron;
+  player.armorEnchanted = true;
+  const auto first = monitor.observe({player}, options, 1000, &teams);
+  require(first.size() == 1 &&
+              first[0].kind == PlayerAlert::Kind::Upgrade &&
+              first[0].text.find("Protection") != std::string::npos &&
+              first[0].text.find("Red Team") != std::string::npos,
+          "enchanted enemy armor did not reveal Protection");
+
+  // Protection is a team purchase, so every later team-mate wearing it is
+  // the same fact and must stay quiet.
+  auto mate = enemy(2, "Alex");
+  mate.team = TeamId::Red;
+  mate.teamAuthoritative = true;
+  mate.armor = ArmorTier::Iron;
+  mate.armorEnchanted = true;
+  require(monitor.observe({mate}, options, 1100, &teams).empty(),
+          "a second Red player re-announced the same team Protection");
+
+  // A different team buying it is new information.
+  auto other = enemy(3, "Bob");
+  other.team = TeamId::Blue;
+  other.teamAuthoritative = true;
+  other.armor = ArmorTier::Diamond;
+  other.armorEnchanted = true;
+  require(monitor.observe({other}, options, 1200, &teams).size() == 1,
+          "a different team's Protection was suppressed");
+
+  // Unenchanted armour says nothing about upgrades.
+  auto plain = enemy(4, "Carl");
+  plain.team = TeamId::Green;
+  plain.teamAuthoritative = true;
+  plain.armor = ArmorTier::Diamond;
+  require(monitor.observe({plain}, options, 1300, &teams).empty(),
+          "plain armor was read as a Protection upgrade");
+}
+
+void concurrentDistinctAlertsOfOneKindBothSurvive() {
+  PlayerMonitor monitor;
+  TeamTracker teams;
+  PlayerAlertOptions options;
+  options.upgrades = true;
+  options.visibility = VisibilityMode::RangeOnly;
+  // A long cooldown so any suppression is unmistakably the cooldown and not
+  // some other rule.
+  options.cooldownMs = 60000;
+
+  // Sharpness and Protection are both "team upgrade" alerts about the same
+  // player. Keyed on category alone the cooldown treated the second as a
+  // repeat of the first and dropped it, so a team that bought both only ever
+  // got one of them reported.
+  auto player = enemy(1, "Steve");
+  player.team = TeamId::Red;
+  player.teamAuthoritative = true;
+  player.armor = ArmorTier::Iron;
+  player.armorEnchanted = true;
+  player.heldItem = {"swordIron", "Iron Sword", 0, true};
+
+  const auto both = monitor.observe({player}, options, 1000, &teams);
+  bool sawSharpness = false;
+  bool sawProtection = false;
+  for (const auto &alert : both) {
+    if (alert.text.find("Sharpness") != std::string::npos)
+      sawSharpness = true;
+    if (alert.text.find("Protection") != std::string::npos)
+      sawProtection = true;
+  }
+  require(both.size() == 2 && sawSharpness && sawProtection,
+          "two distinct upgrades in one tick did not both alert");
+
+  // The cooldown still does its actual job: the same event repeating while it
+  // stays true is suppressed.
+  require(monitor.observe({player}, options, 1100, &teams).empty(),
+          "the same upgrades re-alerted on the next tick");
+}
+
 void deathForgetsOnlyThatPlayersAlertHistory() {
   PlayerMonitor monitor;
   auto options = rangeItemOptions();
@@ -758,6 +1047,52 @@ void deathForgetsOnlyThatPlayersAlertHistory() {
   monitor.forgetPlayer("Nobody Tracked");
   require(monitor.observe({victim, bystander}, options, 1400).empty(),
           "forgetting an untracked name disturbed unrelated players");
+}
+
+void deathKeepsArmorButClearsInventoryState() {
+  PlayerMonitor monitor;
+  PlayerAlertOptions options;
+  options.armor = options.items = true;
+  options.visibility = VisibilityMode::RangeOnly;
+  options.cooldownMs = 60000;
+
+  // Baseline sighting: whatever they already have is not news.
+  auto player = enemy(1, "Steve");
+  player.armor = ArmorTier::Leather;
+  monitor.observe({player}, options, 1000);
+
+  // They upgrade to Iron armor and pull out a potion. Both alert once.
+  player.armor = ArmorTier::Iron;
+  player.heldItem = {"potion", "Invisibility Potion", 14, false};
+  require(monitor.observe({player}, options, 1100).size() == 2,
+          "armor upgrade and first potion sighting did not both alert");
+
+  // Steve dies. In Bedwars that costs him his inventory but not his armor:
+  // he respawns still wearing Iron.
+  monitor.forgetPlayerLoadout("Steve");
+
+  // Same Iron armor, so nothing new to say about it. A re-alert here would
+  // mean the armor baseline was wiped along with the inventory, and the user
+  // would get spammed with the same armor line after every single kill.
+  require(monitor.observe({player}, options, 1200).empty(),
+          "armor re-alerted after a death even though armor survives death");
+
+  // The potion, on the other hand, was genuinely lost and re-bought, so it is
+  // news again. Silence here would mean the per-match item dedup outlived the
+  // death that invalidated it.
+  player.heldItem = {"potion", "Invisibility Potion", 14, false};
+  const auto rebought = monitor.observe({player}, options, 1300);
+  require(rebought.size() == 1 &&
+              rebought[0].text.find("Invisibility Potion") != std::string::npos,
+          "re-bought potion stayed silent after death");
+
+  // And a real armor upgrade after the death must still get through.
+  player.armor = ArmorTier::Diamond;
+  player.heldItem = {};
+  const auto upgraded = monitor.observe({player}, options, 70000);
+  require(upgraded.size() == 1 &&
+              upgraded[0].text.find("Diamond") != std::string::npos,
+          "post-death armor upgrade was suppressed");
 }
 
 void deathVictimParsesKnownPhrasesAndRejectsProse() {
@@ -905,15 +1240,14 @@ void swordTiersAreMonotonicAndAllowlistIsExplicit() {
   require(monitor.observe({player}, options, 1500).size() == 1,
           "Diamond sword upgrade did not alert");
 
-  const std::array<ImportantItem, 10> allowed = {
-      ImportantItem::Bow, ImportantItem::Tnt, ImportantItem::Fireball,
-      ImportantItem::EnderPearl, ImportantItem::GoldenApple,
-      ImportantItem::Milk, ImportantItem::SpeedPotion,
-      ImportantItem::JumpPotion, ImportantItem::InvisibilityPotion,
-      ImportantItem::KnockbackStick};
-  for (const auto item : allowed)
-    require(std::string(importantItemName(item)).size() > 0,
-            "an allowlisted item has no user-facing name");
+  // Every value except None must have a user-facing name, otherwise an alert
+  // for a newly added item would render as "Steve is holding ".
+  for (std::size_t i = 1; i < static_cast<std::size_t>(ImportantItem::Count);
+       ++i) {
+    require(std::string(importantItemName(static_cast<ImportantItem>(i)))
+                    .size() > 0,
+            "an alertable item has no user-facing name");
+  }
 }
 
 void playerVisibilityAndIdentityRejectionsAreCounted() {
@@ -999,156 +1333,6 @@ void notificationDurationsAndMaximumAreDeterministic() {
           "notification did not expire at exact duration");
 }
 
-OwnBed horizontalBed() {
-  return {{10, 64, 10}, {11, 64, 10}, BedAxis::X, TeamId::Blue,
-          true, true, "test", 7};
-}
-
-PlacementObservation validPlacementBase(const OwnBed &bed) {
-  PlacementObservation observation;
-  observation.masterEnabled = true;
-  observation.moduleEnabled = true;
-  observation.hookAvailable = true;
-  observation.activeMatch = true;
-  observation.obsidianHeld = true;
-  observation.targetKnown = true;
-  observation.worldCurrent = true;
-  observation.localTeam = bed.team;
-  observation.ownBed = bed;
-  return observation;
-}
-
-void exactObsidianShellAllowsEightForBothAxes() {
-  const std::array<OwnBed, 2> beds = {
-      horizontalBed(),
-      OwnBed{{20, 70, 20}, {20, 70, 21}, BedAxis::Z, TeamId::Pink,
-             true, true, "test", 9}};
-  for (const auto &bed : beds) {
-    const auto shell = obsidianShell(bed);
-    std::vector<BlockPosition> unique(shell.begin(), shell.end());
-    std::sort(unique.begin(), unique.end(), [](const auto &a, const auto &b) {
-      if (a.x != b.x) return a.x < b.x;
-      if (a.y != b.y) return a.y < b.y;
-      return a.z < b.z;
-    });
-    unique.erase(std::unique(unique.begin(), unique.end()), unique.end());
-    require(unique.size() == 8, "bed shell did not contain exactly eight cells");
-    for (const auto &position : shell) {
-      require(isValidObsidianShellPosition(bed, position),
-              "one valid shell cell was rejected");
-      auto observation = validPlacementBase(bed);
-      observation.resultingPosition = position;
-      require(!evaluateObsidianPlacement(observation).cancel,
-              "valid obsidian shell placement was cancelled");
-      auto beside = validPlacementBase(bed);
-      beside.resultingPosition = {position.x, position.y + 1, position.z};
-      require(evaluateObsidianPlacement(beside).cancel,
-              "invalid position immediately beside a shell cell was allowed");
-    }
-    auto invalid = validPlacementBase(bed);
-    invalid.resultingPosition = {bed.head.x, bed.head.y - 1, bed.head.z};
-    require(evaluateObsidianPlacement(invalid).cancel,
-            "nearby invalid obsidian cell was allowed");
-  }
-
-  OwnBed reversed = horizontalBed();
-  std::swap(reversed.head, reversed.foot);
-  const auto forwardShell = obsidianShell(horizontalBed());
-  const auto reverseShell = obsidianShell(reversed);
-  for (const auto &position : forwardShell)
-    require(std::find(reverseShell.begin(), reverseShell.end(), position) !=
-                reverseShell.end(),
-            "reversing head and foot changed the eight-cell shell");
-}
-
-void antiMisplaceFailsOpenForEveryUncertainSignal() {
-  const OwnBed bed = horizontalBed();
-  auto base = validPlacementBase(bed);
-  base.resultingPosition = {50, 64, 50};
-  require(evaluateObsidianPlacement(base).cancel,
-          "fully confirmed invalid obsidian placement was not cancelled");
-  const std::array<std::function<void(PlacementObservation &)>, 10> weaken = {
-      [](auto &o) { o.masterEnabled = false; },
-      [](auto &o) { o.moduleEnabled = false; },
-      [](auto &o) { o.hookAvailable = false; },
-      [](auto &o) { o.activeMatch = false; },
-      [](auto &o) { o.obsidianHeld = false; },
-      [](auto &o) { o.targetKnown = false; },
-      [](auto &o) { o.worldCurrent = false; },
-      [](auto &o) { o.localTeam = TeamId::Unknown; },
-      [](auto &o) { o.ownBedDestroyed = true; },
-      [](auto &o) { o.ownBed.reset(); }};
-  for (const auto &change : weaken) {
-    auto uncertain = base;
-    change(uncertain);
-    require(!evaluateObsidianPlacement(uncertain).cancel,
-            "uncertain placement signal did not fail open");
-  }
-  auto wrongTeam = base;
-  wrongTeam.localTeam = TeamId::Red;
-  require(!evaluateObsidianPlacement(wrongTeam).cancel,
-          "wrong-team bed did not fail open");
-  auto malformedBed = base;
-  malformedBed.ownBed->foot = {12, 64, 10};
-  require(!isValidObsidianShellPosition(*malformedBed.ownBed,
-                                        malformedBed.resultingPosition),
-          "malformed two-block bed was accepted as shell geometry");
-}
-
-void antiMisplaceTargetFacesReadinessAndPropagation() {
-  const BlockPosition target{10, 64, 10};
-  require(resultingPlacementPosition(target, {1, 0, 0}, false) ==
-              BlockPosition{11, 64, 10},
-          "non-replaceable target did not apply the clicked face");
-  require(resultingPlacementPosition(target, {0, 1, 0}, true) == target,
-          "replaceable target incorrectly applied the clicked face");
-
-  auto ready = validPlacementBase(horizontalBed());
-  require(antiMisplaceStatus(ready) == AntiMisplaceStatus::Ready,
-          "fully known placement state was not ready");
-  auto state = ready;
-  state.masterEnabled = false;
-  require(antiMisplaceStatus(state) == AntiMisplaceStatus::Disabled,
-          "master gate did not disable readiness");
-  state = ready;
-  state.activeMatch = false;
-  require(antiMisplaceStatus(state) ==
-              AntiMisplaceStatus::NotInActiveMatch,
-          "inactive match did not explain readiness");
-  state = ready;
-  state.hookAvailable = false;
-  require(antiMisplaceStatus(state) ==
-              AntiMisplaceStatus::PlacementHookUnavailable,
-          "hook failure did not explain readiness");
-  state = ready;
-  state.localTeam = TeamId::Unknown;
-  require(antiMisplaceStatus(state) == AntiMisplaceStatus::WaitingForTeam,
-          "unknown team did not explain readiness");
-  state = ready;
-  state.ownBed.reset();
-  require(antiMisplaceStatus(state) == AntiMisplaceStatus::WaitingForOwnBed,
-          "unknown bed did not explain readiness");
-  state = ready;
-  state.ownBedDestroyed = true;
-  require(antiMisplaceStatus(state) == AntiMisplaceStatus::OwnBedDestroyed,
-          "destroyed own bed did not disable readiness");
-
-  ready.resultingPosition = {100, 70, 100};
-  const auto cancel = evaluateObsidianPlacement(ready);
-  require(cancellationPreventsPlacementAction(cancel, true) &&
-              !cancellationPreventsPlacementAction(cancel, false),
-          "cancellation was not tied to the pre-packet boundary");
-  require(!controllerResultForCancelledPlacement() &&
-              !callerFallbackForCancelledPlacement(),
-          "cancelled placement would trigger a controller or caller action");
-  for (int invocation = 0; invocation < 20; ++invocation)
-    require(evaluateObsidianPlacement(ready).cancel,
-            "repeated held-right-click invocation escaped cancellation");
-  ready.obsidianHeld = false;
-  require(!evaluateObsidianPlacement(ready).cancel,
-          "normal non-obsidian right click was consumed");
-}
-
 void everyBuiltInMapHeightResolvesAndIsConsistent() {
   const auto &maps = builtInMapHeights();
   require(maps.size() == 192, "reviewed map table entry count changed");
@@ -1166,7 +1350,7 @@ void everyBuiltInMapHeightResolvesAndIsConsistent() {
   }
 }
 
-void mapAliasesFormattingUnknownAndOverrideWork() {
+void mapAliasesFormattingAndUnknownMapsAreConservative() {
   const auto sky = resolveMapHeight("  \xC2\xA7" "bSky-Rise  ");
   require(sky.canonicalName == "Sky Rise" && sky.maximumPlacementY == 90,
           "formatted map alias did not normalize");
@@ -1181,15 +1365,11 @@ void mapAliasesFormattingUnknownAndOverrideWork() {
           "non-map or empty map line parsed");
   require(!resolveMapHeight("Future Unknown Map").maximumPlacementY,
           "unknown map received a guessed height");
-  const auto overridden = resolveMapHeight(
-      "Future-Unknown Map", {{"future unknown map", 123}});
-  require(overridden.overridden && overridden.maximumPlacementY == 123 &&
-              overridden.maximumPlayerY == 124,
-          "manual per-map override did not take precedence");
-  require(!resolveMapHeight("Future Unknown Map",
-                            {{"future unknown map", 999}})
-               .maximumPlacementY,
-          "malformed manual override was accepted");
+  // The overridden flag now belongs solely to the manual height limit applied
+  // on top of this result, so the table lookup itself must never claim it --
+  // otherwise the HUD would report a user override nobody configured.
+  require(!sky.overridden && !resolveMapHeight("Future Unknown Map").overridden,
+          "map table lookup claimed a manual override");
 }
 
 void heightBoundariesUsePlacementCeiling() {
@@ -1219,40 +1399,46 @@ void hudDefaultsAreIndependentAndRecoverable() {
           "HUD screen-bound recovery failed");
 }
 
-void configV2PersistsHudDurationsOverridesAndMaster() {
+void configRoundTripKeepsEveryHudSlotDistinct() {
+  // Each HUD is written under its own key, so give every slot a layout no other
+  // slot shares. Reading a slot back with a neighbour's position would mean the
+  // HUD keys are addressed positionally and drifted when the HUD list shrank.
   Configuration::Settings settings;
   settings.masterEnabled = true;
   settings.modules[static_cast<std::size_t>(Module::ItemAlerts)] = true;
   settings.visibilityMode = VisibilityMode::CameraView;
-  settings.cameraViewDegrees = 123.0F;
-  settings.defaultNotificationSeconds = 2.0F;
-  settings.importantNotificationSeconds = 6.0F;
-  settings.playerNotificationSeconds = 7.0F;
-  settings.warningNotificationSeconds = 8.0F;
-  settings.maximumVisibleNotifications = 4;
-  settings.hud[static_cast<std::size_t>(HudId::BedStatus)] =
-      {true, 0.31F, 0.41F, 1.6F};
-  settings.mapPlacementOverrides["Future Map"] = 122;
+  for (std::size_t i = 0; i < kHudCount; ++i) {
+    const float step = static_cast<float>(i);
+    settings.hud[i] = {true, 0.10F + 0.05F * step, 0.60F - 0.05F * step,
+                       0.75F + 0.10F * step};
+  }
   const auto decoded = Configuration::deserialize(
       Configuration::serialize(settings));
-  const auto &hud = decoded.hud[static_cast<std::size_t>(HudId::BedStatus)];
-  require(decoded.formatVersion == 3 && decoded.masterEnabled &&
+  require(decoded.formatVersion == 4 && decoded.masterEnabled &&
               decoded.modules[static_cast<std::size_t>(Module::ItemAlerts)] &&
-              decoded.visibilityMode == VisibilityMode::CameraView &&
-              decoded.cameraViewDegrees == 123.0F && hud.visible &&
-              std::abs(hud.x - 0.31F) < 0.001F &&
-              std::abs(hud.scale - 1.6F) < 0.001F &&
-              decoded.maximumVisibleNotifications == 4 &&
-              decoded.mapPlacementOverrides.at("future map") == 122,
-          "v2 configuration round trip lost new settings");
+              decoded.visibilityMode == VisibilityMode::CameraView,
+          "configuration round trip lost the master, module or visibility "
+          "settings");
+  for (std::size_t i = 0; i < kHudCount; ++i) {
+    const float step = static_cast<float>(i);
+    const auto &hud = decoded.hud[i];
+    require(hud.visible &&
+                std::abs(hud.x - (0.10F + 0.05F * step)) < 0.001F &&
+                std::abs(hud.y - (0.60F - 0.05F * step)) < 0.001F &&
+                std::abs(hud.scale - (0.75F + 0.10F * step)) < 0.001F,
+            "a HUD layout was lost or picked up another HUD's layout");
+  }
 }
 
 void configV1MigrationPreservesPreferencesAndPositions() {
+  // A version-less configuration is the oldest layout still in the wild, and it
+  // names modules that no longer exist. Migration has to be driven by the keys
+  // that survived, leaving the rest of the user's preferences intact.
   const auto migrated = Configuration::deserialize(
       "master=1;eventTimers=1;heightOverlay=1;resourceTracker=1;"
       "resourceHud=1;upgradeHud=1;bedTracker=1;timerX=0.25;timerY=0.35;"
       "timerScale=1.5;heightX=0.45;heightY=0.55;heightScale=1.7;");
-  require(migrated.formatVersion == 3 && migrated.masterEnabled &&
+  require(migrated.formatVersion == 4 && migrated.masterEnabled &&
               migrated.visibilityMode == VisibilityMode::RangeOnly,
           "v1 compatibility defaults failed");
   const auto timer = migrated.hud[static_cast<std::size_t>(HudId::EventTimer)];
@@ -1261,32 +1447,30 @@ void configV1MigrationPreservesPreferencesAndPositions() {
               std::abs(timer.scale - 1.5F) < 0.001F && height.visible &&
               std::abs(height.y - 0.55F) < 0.001F &&
               migrated.hud[static_cast<std::size_t>(HudId::Resource)].visible &&
-              migrated.hud[static_cast<std::size_t>(HudId::TeamState)].visible &&
-              migrated.hud[static_cast<std::size_t>(HudId::BedDistance)].visible,
+              migrated.hud[static_cast<std::size_t>(HudId::TeamState)].visible,
           "v1 module and HUD preferences were not migrated");
 }
 
 void configMalformedNewFieldsAreIndependentlySanitized() {
+  // Every malformed value here sits next to a well-formed one, including keys
+  // that no longer exist at all. Each bad field may only cost its own setting.
   const auto settings = Configuration::deserialize(
       "version=2;master=1;visibilityMode=99;cameraViewDegrees=nan;"
-      "notificationDefault=0;notificationImportant=99;notificationPlayer=inf;"
-      "notificationWarning=5junk;notificationMaximum=999;hud0Visible=1;"
-      "hud0X=nan;hud0Y=2;hud0Scale=-9;mapOverrides=good:120|bad:12junk|huge:999;");
+      "playerAlertRange=abc;bedScanIntervalMs=junk;trapReminder=;hud0Visible=1;"
+      "hud0X=nan;hud0Y=2;hud0Scale=-9;heightLimitOverride=77;");
+  const Configuration::Settings defaults;
   require(settings.masterEnabled &&
-              settings.visibilityMode == VisibilityMode::CameraView &&
-              settings.cameraViewDegrees == 100.0F &&
-              settings.defaultNotificationSeconds == 1.0F &&
-              settings.importantNotificationSeconds == 15.0F &&
-              settings.playerNotificationSeconds == 4.0F &&
-              settings.warningNotificationSeconds == 5.0F &&
-              settings.maximumVisibleNotifications == 10,
-          "malformed new numeric fields were not safely isolated");
+              settings.visibilityMode == VisibilityMode::CameraView,
+          "malformed neighbouring fields disturbed the parsed visibility mode");
+  require(settings.playerAlertRange == defaults.playerAlertRange &&
+              settings.trapReminderSeconds == defaults.trapReminderSeconds,
+          "a malformed numeric field resolved to something other than its "
+          "default");
+  require(settings.heightLimitOverride == 77,
+          "malformed and unknown keys prevented a later valid key from parsing");
   const auto hud = settings.hud[0];
   require(hud.visible && hud.x == 0.02F && hud.y == 1.0F && hud.scale == 0.5F,
           "malformed HUD fields erased unrelated settings");
-  require(settings.mapPlacementOverrides.size() == 1 &&
-              settings.mapPlacementOverrides.at("good") == 120,
-          "malformed map overrides contaminated valid entries");
 }
 
 void removedRendererConfigKeysAreIgnoredWithoutModuleShifts() {
@@ -1298,9 +1482,9 @@ void removedRendererConfigKeysAreIgnoredWithoutModuleShifts() {
           ";bedEspOpacity=0.75;bedEspRed=1;bedEspGreen=2;bedEspBlue=3;"
           "unknownBedRed=4;unknownBedGreen=5;unknownBedBlue=6;"
           "pickupAlerts=1;armorAlerts=1;trapNotifier=1;resourceTracker=1;"
-          "itemAlerts=1;upgradeHud=1;antiMisplace=1;";
+          "itemAlerts=1;upgradeHud=1;antiMisplace=1;bedTracker=1;";
       const auto migrated = Configuration::deserialize(data);
-      require(migrated.formatVersion == 3 &&
+      require(migrated.formatVersion == 4 &&
                   migrated.modules[static_cast<std::size_t>(
                       Module::PickupAlerts)] &&
                   migrated.modules[static_cast<std::size_t>(
@@ -1312,14 +1496,14 @@ void removedRendererConfigKeysAreIgnoredWithoutModuleShifts() {
                   migrated.modules[static_cast<std::size_t>(
                       Module::ItemAlerts)] &&
                   migrated.modules[static_cast<std::size_t>(
-                      Module::UpgradeHud)] &&
-                  migrated.modules[static_cast<std::size_t>(
-                      Module::AntiMisplace)],
-              "old renderer key shifted a remaining named module");
+                      Module::UpgradeHud)],
+              "old renderer or bed key shifted a remaining named module");
       const std::string encoded = Configuration::serialize(migrated);
       require(encoded.find("bedEsp") == std::string::npos &&
-                  encoded.find("unknownBed") == std::string::npos,
-              "ignored old renderer keys were resurrected");
+                  encoded.find("unknownBed") == std::string::npos &&
+                  encoded.find("antiMisplace") == std::string::npos &&
+                  encoded.find("bedTracker") == std::string::npos,
+              "ignored old renderer or bed keys were resurrected");
     }
   }
 }
@@ -1370,16 +1554,6 @@ void boundedQueueDropsOnlyOldestAndReportsDrops() {
           "queue drop count was not consumed deterministically");
 }
 
-void bedScanPublicationRejectsCancelledAndStaleWorkers() {
-  require(canPublishBedScanResult(3, 3, true, false),
-          "current enabled scan could not publish");
-  require(!canPublishBedScanResult(2, 3, true, false) &&
-              !canPublishBedScanResult(3, 3, false, false) &&
-              !canPublishBedScanResult(3, 3, true, true) &&
-              !canPublishBedScanResult(0, 0, true, false),
-          "stale, disabled, cancelled, or uninitialized scan could publish");
-}
-
 } // namespace
 
 int main() {
@@ -1410,8 +1584,6 @@ int main() {
       {"player entity reuse", playerMonitorEntityReuseStartsFreshState},
       {"player cooldown", playerMonitorCooldownAndLaterAlert},
       {"player burst capacity", playerMonitorPrunesAndCapsBursts},
-      {"bed distance", bedDistanceUnknownAndBoundary},
-      {"anti misplace rule", antiMisplaceRequiresExactKnownPosition},
       {"shop affordable", shopParsesAffordableVisibleLore},
       {"shop malformed", shopRejectsMalformedAndUnknownCurrency},
       {"shop duplicate", shopUnformattedCodesAndDuplicateProtection},
@@ -1428,8 +1600,15 @@ int main() {
       {"player alert identities", everyPlayerAlertContainsColoredIdentity},
       {"team Sharpness observation", enchantedSwordProducesOneTeamSharpnessOnly},
       {"knockback stick", knockbackStickClassificationAndDeduplication},
+      {"enemy protection glint", enemyProtectionIsRevealedByArmorGlint},
+      {"concurrent same-kind alerts", concurrentDistinctAlertsOfOneKindBothSurvive},
+      {"shop item classification", shopItemsHypixelActuallySellsAreClassified},
+      {"magic milk hold and drink", magicMilkAlertsOnBothHoldingAndDrinking},
+      {"stone sword upgrade", stoneSwordUpgradeAlertsLikeAnyOtherTierJump},
+      {"item repeat window", reboughtItemsAlertAgainAfterTheRepeatWindow},
       {"potions", potionClassificationDedupAndTransition},
       {"death forgets tracked player only", deathForgetsOnlyThatPlayersAlertHistory},
+      {"death keeps armor, clears inventory", deathKeepsArmorButClearsInventoryState},
       {"death victim parsing", deathVictimParsesKnownPhrasesAndRejectsProse},
       {"strict held-item allowlist", strictHeldItemAllowlistAndWoolRegressions},
       {"match-long item state", matchLongItemStateHandlesRangeAndEntityReuse},
@@ -1437,15 +1616,12 @@ int main() {
       {"player rejection reasons", playerVisibilityAndIdentityRejectionsAreCounted},
       {"range and camera modes", rangeAndCameraModesApplyTheirOwnRules},
       {"notification timeline", notificationDurationsAndMaximumAreDeterministic},
-      {"obsidian shells", exactObsidianShellAllowsEightForBothAxes},
-      {"anti misplace fail open", antiMisplaceFailsOpenForEveryUncertainSignal},
-      {"anti misplace boundary and status",
-       antiMisplaceTargetFacesReadinessAndPropagation},
       {"all built-in maps", everyBuiltInMapHeightResolvesAndIsConsistent},
-      {"map aliases overrides", mapAliasesFormattingUnknownAndOverrideWork},
+      {"map aliases and unknown maps",
+       mapAliasesFormattingAndUnknownMapsAreConservative},
       {"height boundaries", heightBoundariesUsePlacementCeiling},
       {"HUD defaults recovery", hudDefaultsAreIndependentAndRecoverable},
-      {"config v2 new settings", configV2PersistsHudDurationsOverridesAndMaster},
+      {"config hud slot round trip", configRoundTripKeepsEveryHudSlotDistinct},
       {"config v1 migration", configV1MigrationPreservesPreferencesAndPositions},
       {"config malformed new fields", configMalformedNewFieldsAreIndependentlySanitized},
       {"removed renderer config migration",
@@ -1453,7 +1629,6 @@ int main() {
       {"config master persistence", configurationSettersPersistMasterAndSavedChildren},
       {"shutdown coordinator", shutdownCoordinatorIsIdempotentAndMonotonic},
       {"bounded queue", boundedQueueDropsOnlyOldestAndReportsDrops},
-      {"bed scan publication", bedScanPublicationRejectsCancelledAndStaleWorkers},
   };
 
   int failures = 0;

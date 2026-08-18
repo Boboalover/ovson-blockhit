@@ -75,10 +75,6 @@ void setTabSortDescending(bool desc);
 bool isDebugging();
 void setDebugging(bool enabled);
 
-// bed defense settings
-bool isBedDefenseEnabled();
-void setBedDefenseEnabled(bool enabled);
-
 bool isNickedBypass();
 void setNickedBypass(bool enabled);
 
@@ -293,11 +289,9 @@ void setPingDisplayMode(int mode);
 enum class DebugCategory {
   General,
   GameDetection,
-  BedDetection,
   Urchin,
   Seraph,
-  GUI,
-  BedDefense
+  GUI
 };
 
 bool isDebugEnabled(DebugCategory cat);

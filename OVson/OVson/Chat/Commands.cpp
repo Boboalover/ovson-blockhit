@@ -1,7 +1,6 @@
 #include "Commands.h"
 #include "../Config/Config.h"
 #include "../Java.h"
-#include "../Logic/BedDefense/BedDefenseManager.h"
 #include "../Logic/StatsTracker.h"
 #include "../Logic/StatsTracker.internal.h"
 #include "../ClickGUI/ClickGUI.h"
@@ -936,53 +935,6 @@ void cmd_numdenicker(const std::string &args) {
 
 } // namespace
 
-void cmd_bedplates(const std::string &args) {
-  std::string trimmed = args;
-  while (!trimmed.empty() && trimmed.front() == ' ')
-    trimmed.erase(trimmed.begin());
-  while (!trimmed.empty() && trimmed.back() == ' ')
-    trimmed.pop_back();
-
-  BedDefense::BedDefenseManager *manager =
-      BedDefense::BedDefenseManager::getInstance();
-
-  if (Config::isForgeEnvironment()) {
-    ChatSDK::showPrefixed(
-        "§cBedDefense is permanently disabled on Forge for safety.");
-    return;
-  }
-
-  if (trimmed == "on") {
-    Config::setBedDefenseEnabled(true);
-    manager->enable();
-    ChatSDK::showPrefixed("§aBed Defense nameplates enabled");
-  } else if (trimmed == "off") {
-    Config::setBedDefenseEnabled(false);
-    manager->disable();
-    ChatSDK::showPrefixed("§cBed Defense nameplates disabled");
-  } else {
-    bool current = Config::isBedDefenseEnabled();
-    ChatSDK::showPrefixed(std::string("§7Bed Defense: ") +
-                          (current ? "§aON" : "§cOFF"));
-    ChatSDK::showPrefixed("§7Usage: §f" + Config::getCommandPrefix() +
-                          "bedplates on§7 or §f" + Config::getCommandPrefix() +
-                          "bedplates off");
-  }
-}
-
-void cmd_bedscan(const std::string &args) {
-  (void)args;
-  if (Config::isForgeEnvironment()) {
-    ChatSDK::showPrefixed("§cBed scan is disabled on Forge.");
-    return;
-  }
-  ChatSDK::showPrefixed("§7Manually triggering bed scan...");
-  BedDefense::BedDefenseManager *manager =
-      BedDefense::BedDefenseManager::getInstance();
-  manager->onWorldChange();
-  manager->forceScan();
-}
-
 void cmd_lookat(const std::string &args) {
   (void)args;
   if (!lc)
@@ -1102,20 +1054,6 @@ void cmd_lookat(const std::string &args) {
           int by = env->CallIntMethod(bpos, m_getY);
           int bz = env->CallIntMethod(bpos, m_getZ);
 
-          std::string name = "unknown";
-          try {
-            name = BedDefense::BedDefenseManager::getInstance()->getBlockName(
-                bx, by, bz);
-          } catch (...) {
-          }
-          int meta = 0;
-          try {
-            meta =
-                BedDefense::BedDefenseManager::getInstance()->getBlockMetadata(
-                    bx, by, bz);
-          } catch (...) {
-          }
-
           std::string debugInfo = "§7ID: §f?";
           try {
             jclass worldCls = lc->GetClass("net.minecraft.world.World");
@@ -1200,8 +1138,6 @@ void cmd_lookat(const std::string &args) {
           } catch (...) {
           }
 
-          ChatSDK::showPrefixed("§7LookAt: §f" + name + " §7(Meta: §f" +
-                                std::to_string(meta) + "§7)");
           ChatSDK::showPrefixed(debugInfo + " §7at §f" + std::to_string(bx) +
                                 "," + std::to_string(by) + "," +
                                 std::to_string(bz));
@@ -1365,8 +1301,6 @@ void RegisterDefaultCommands() {
   CommandRegistry::instance().registerCommand("localname", cmd_localname);
   CommandRegistry::instance().registerCommand("stats", cmd_stats);
   CommandRegistry::instance().registerCommand("clickgui", cmd_clickgui);
-  CommandRegistry::instance().registerCommand("bedplates", cmd_bedplates);
-  CommandRegistry::instance().registerCommand("bedscan", cmd_bedscan);
   CommandRegistry::instance().registerCommand("lookat", cmd_lookat);
   CommandRegistry::instance().registerCommand("clearcache", cmd_clearcache);
   CommandRegistry::instance().registerCommand("tech", cmd_tech);

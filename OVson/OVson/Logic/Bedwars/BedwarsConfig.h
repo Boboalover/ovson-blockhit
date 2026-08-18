@@ -8,19 +8,32 @@
 
 namespace OVson::Bedwars::Configuration {
 
+// Values that used to be user-tunable. They are now fixed: the defaults were
+// what nearly everyone ran, and each extra slider cost more in menu clutter
+// than it ever returned in usefulness.
+namespace Fixed {
+inline constexpr bool kDynamicTimerColor = true;
+inline constexpr bool kDynamicHeightColor = true;
+inline constexpr bool kShortUpgradeLabels = true;
+inline constexpr bool kStackedResourceAlerts = true;
+inline constexpr int kPlayerAlertCooldownMs = 2500;
+inline constexpr float kCameraViewDegrees = 100.0F;
+inline constexpr float kDefaultNotificationSeconds = 3.0F;
+inline constexpr float kImportantNotificationSeconds = 5.0F;
+inline constexpr float kPlayerNotificationSeconds = 4.0F;
+inline constexpr float kWarningNotificationSeconds = 5.0F;
+inline constexpr int kMaximumVisibleNotifications = 5;
+} // namespace Fixed
+
 struct Settings {
   Settings();
-  int formatVersion = 3;
+  int formatVersion = 4;
   bool masterEnabled = false;
   std::array<bool, kModuleCount> modules{};
   bool debug = false;
   bool sounds = true;
   bool onlyNextEvent = true;
-  bool dynamicTimerColor = true;
-  bool dynamicHeightColor = true;
-  bool shortUpgradeLabels = true;
   bool resourceHud = false;
-  bool stackedResourceAlerts = true;
   std::array<bool, kResourceCount> resources = {true, true, true, true};
   bool shopDuplicatePrevention = false;
   float timerX = 0.02F;
@@ -30,21 +43,11 @@ struct Settings {
   float heightY = 0.45F;
   float heightScale = 1.0F;
   int heightLimitOverride = 0;
-  float bedWarningRange = 40.0F;
-  float bedMaximumRange = 96.0F;
-  int bedScanIntervalMs = 10000;
   float playerAlertRange = 32.0F;
-  int playerAlertCooldownMs = 2500;
   int trapReminderSeconds = 90;
   VisibilityMode visibilityMode = VisibilityMode::LineOfSight;
-  float cameraViewDegrees = 100.0F;
-  float defaultNotificationSeconds = 3.0F;
-  float importantNotificationSeconds = 5.0F;
-  float playerNotificationSeconds = 4.0F;
-  float warningNotificationSeconds = 5.0F;
-  int maximumVisibleNotifications = 5;
+  AlertOutput alertOutput = AlertOutput::Overlay;
   std::array<HudLayout, kHudCount> hud{};
-  std::unordered_map<std::string, int> mapPlacementOverrides;
 
   bool enabled(Module module) const;
 };
@@ -64,16 +67,8 @@ bool areSoundsEnabled();
 void setSoundsEnabled(bool enabled);
 bool isOnlyNextEvent();
 void setOnlyNextEvent(bool enabled);
-bool isDynamicTimerColor();
-void setDynamicTimerColor(bool enabled);
-bool isDynamicHeightColor();
-void setDynamicHeightColor(bool enabled);
-bool isShortUpgradeLabels();
-void setShortUpgradeLabels(bool enabled);
 bool isResourceHudEnabled();
 void setResourceHudEnabled(bool enabled);
-bool isStackedResourceAlerts();
-void setStackedResourceAlerts(bool enabled);
 bool isResourceEnabled(Resource resource);
 void setResourceEnabled(Resource resource, bool enabled);
 float getTimerX();
@@ -90,38 +85,18 @@ float getHeightScale();
 void setHeightScale(float value);
 float getPlayerAlertRange();
 void setPlayerAlertRange(float range);
-float getBedWarningRange();
-void setBedWarningRange(float range);
-float getBedMaximumRange();
-void setBedMaximumRange(float range);
-int getBedScanIntervalMs();
-void setBedScanIntervalMs(int interval);
 int getHeightLimitOverride();
 void setHeightLimitOverride(int limit);
-int getPlayerAlertCooldownMs();
-void setPlayerAlertCooldownMs(int cooldown);
 int getTrapReminderSeconds();
 void setTrapReminderSeconds(int seconds);
 VisibilityMode getVisibilityMode();
 void setVisibilityMode(VisibilityMode mode);
-float getCameraViewDegrees();
-void setCameraViewDegrees(float degrees);
+AlertOutput getAlertOutput();
+void setAlertOutput(AlertOutput output);
 HudLayout getHudLayout(HudId hud);
 void setHudLayout(HudId hud, const HudLayout &layout);
 void resetHudLayout(HudId hud);
 void resetAllHudLayouts();
-float getDefaultNotificationSeconds();
-void setDefaultNotificationSeconds(float seconds);
-float getImportantNotificationSeconds();
-void setImportantNotificationSeconds(float seconds);
-float getPlayerNotificationSeconds();
-void setPlayerNotificationSeconds(float seconds);
-float getWarningNotificationSeconds();
-void setWarningNotificationSeconds(float seconds);
-int getMaximumVisibleNotifications();
-void setMaximumVisibleNotifications(int maximum);
-void setMapPlacementOverride(const std::string &mapName, int placementY);
-void resetMapPlacementOverride(const std::string &mapName);
 
 std::string serialize(const Settings &settings);
 Settings deserialize(const std::string &data);

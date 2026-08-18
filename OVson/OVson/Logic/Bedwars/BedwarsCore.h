@@ -53,8 +53,6 @@ private:
 enum class Module : std::size_t {
   EventTimers,
   ShopHelper,
-  AntiMisplace,
-  BedTracker,
   HeightOverlay,
   UpgradeAlerts,
   ConsumeAlerts,
@@ -110,6 +108,7 @@ struct TeamState {
   TeamId id = TeamId::Unknown;
   BedState bed = BedState::Unknown;
   bool sharpnessObserved = false;
+  bool protectionObserved = false;
   Tick latestObservation = 0;
   std::string latestSource;
   std::array<std::string, 16> playerNames{};
@@ -125,6 +124,8 @@ public:
                      const std::string &source = "scoreboard");
   bool observeSharpness(TeamId team, Tick now,
                         const std::string &source = "enchanted sword");
+  bool observeProtection(TeamId team, Tick now,
+                         const std::string &source = "enchanted armor");
   void observeBed(TeamId team, BedState state, Tick now,
                   const std::string &source);
   void expire(Tick now, Tick maximumAgeMs = 15000);
@@ -318,9 +319,11 @@ enum class PotionKind { Unknown, Speed, Jump, Invisibility };
 enum class SwordTier { None, Wood, Stone, Iron, Diamond };
 enum class ImportantItem : std::size_t {
   None,
+  StoneSword,
   IronSword,
   DiamondSword,
   Bow,
+  EnchantedBow,
   KnockbackStick,
   SpeedPotion,
   JumpPotion,
@@ -330,9 +333,24 @@ enum class ImportantItem : std::size_t {
   EnderPearl,
   GoldenApple,
   Milk,
+  BridgeEgg,
+  WaterBucket,
+  DreamDefender,
   Count
 };
+
+// How long a player has to go without being seen holding an item before the
+// same item counts as news again. Without this the per-match dedup is
+// permanent, so an enemy who buys a second Ender Pearl twenty minutes into a
+// game is silently ignored. It only restarts once they are actually seen
+// holding something else, so simply keeping an item in hand never re-alerts.
+constexpr Tick kImportantItemRepeatMs = 45000;
 enum class VisibilityMode { RangeOnly, LineOfSight, CameraView };
+
+// Where an alert is delivered. The overlay is glanceable but disappears; chat
+// leaves a scrollback you can check after a fight.
+enum class AlertOutput { Overlay, Chat, Both };
+const char *alertOutputName(AlertOutput output);
 enum class PlayerRejectReason {
   None,
   LocalPlayer,
@@ -388,6 +406,10 @@ struct PlayerObservation {
   bool cameraViewKnown = false;
   bool insideCameraView = false;
   ArmorTier armor = ArmorTier::None;
+  // Any enchant on any worn piece. On Hypixel the only armour enchant a
+  // player can have is the team's Protection upgrade, so the glint is a
+  // direct read of an upgrade that is otherwise never announced to enemies.
+  bool armorEnchanted = false;
   VisibleItem heldItem;
   bool usingItem = false;
 };
@@ -418,7 +440,9 @@ struct PlayerMonitorDiagnostics {
   std::size_t potionDuplicates = 0;
   std::size_t knockbackDuplicates = 0;
   std::size_t sharpnessDuplicates = 0;
+  std::size_t protectionDuplicates = 0;
   std::size_t observedSwordGlints = 0;
+  std::size_t observedArmorGlints = 0;
   std::size_t classifiedPotions = 0;
   std::size_t classifiedKnockback = 0;
   std::size_t unknownItems = 0;
@@ -454,7 +478,15 @@ public:
   // the normal first-sight alert logic report their post-respawn loadout
   // instead of staying silent because the old loadout was already
   // reported. Safe to call with a name that isn't currently tracked.
+  // Full removal: the player is gone as far as we are concerned (left the
+  // server, match reset). The next sighting is treated as a first sighting.
   void forgetPlayer(const std::string &identity);
+
+  // Death/respawn reset: clears only the state a Bedwars death actually takes
+  // away (sword tier, held item, per-match item flags) and deliberately keeps
+  // the armor baseline, because armor survives death and re-alerting it after
+  // every kill is noise.
+  void forgetPlayerLoadout(const std::string &identity);
 
 private:
   struct TrackedPlayer {
@@ -464,10 +496,21 @@ private:
     VisibleItem heldItem;
     bool usingItem = false;
     SwordTier highestSwordTier = SwordTier::None;
-    std::array<bool, static_cast<std::size_t>(ImportantItem::Count)>
-        seenImportantItems{};
+    // Tick of the last alert per important item, 0 meaning never alerted.
+    // This used to be a plain bool, which made every item a once-per-match
+    // event and was the reason re-bought items went unreported.
+    std::array<Tick, static_cast<std::size_t>(ImportantItem::Count)>
+        importantItemAlertedAt{};
+    // The cooldown remembers WHICH event it last fired for, not just when.
+    // Keyed on time alone, two different things happening at once -- a team
+    // revealing Sharpness and Protection in the same second, say -- collapsed
+    // into one alert, because the second was read as a repeat of the first.
+    struct AlertMemory {
+      std::string event;
+      Tick at = 0;
+    };
     Tick lastSeen = 0;
-    std::array<Tick, 6> lastAlert{};
+    std::array<AlertMemory, 6> lastAlert{};
   };
   std::unordered_map<std::string, TrackedPlayer> m_players;
   std::unordered_map<int, std::string> m_entityOwners;
@@ -475,90 +518,6 @@ private:
   PlayerMonitorDiagnostics m_diagnostics;
   std::vector<PlayerRejectionDetail> m_rejectionDetails;
 };
-
-struct BlockPosition {
-  int x = 0;
-  int y = 0;
-  int z = 0;
-};
-
-bool operator==(const BlockPosition &left, const BlockPosition &right);
-
-enum class BedAxis { X, Z };
-
-struct OwnBed {
-  BlockPosition head;
-  BlockPosition foot;
-  BedAxis axis = BedAxis::X;
-  TeamId team = TeamId::Unknown;
-  bool confident = false;
-  bool alive = true;
-  std::string confidenceSource;
-  std::uint64_t worldGeneration = 0;
-};
-
-std::array<BlockPosition, 8> obsidianShell(const OwnBed &bed);
-bool isValidObsidianShellPosition(const OwnBed &bed,
-                                  const BlockPosition &position);
-
-struct PlacementObservation {
-  bool masterEnabled = false;
-  bool moduleEnabled = false;
-  bool hookAvailable = false;
-  bool activeMatch = false;
-  bool obsidianHeld = false;
-  bool targetKnown = false;
-  bool worldCurrent = false;
-  bool ownBedDestroyed = false;
-  TeamId localTeam = TeamId::Unknown;
-  BlockPosition resultingPosition;
-  std::optional<OwnBed> ownBed;
-};
-
-enum class AntiMisplaceStatus {
-  Disabled,
-  NotInActiveMatch,
-  PlacementHookUnavailable,
-  WaitingForTeam,
-  WaitingForOwnBed,
-  OwnBedDestroyed,
-  Ready
-};
-
-const char *antiMisplaceStatusName(AntiMisplaceStatus status);
-AntiMisplaceStatus antiMisplaceStatus(const PlacementObservation &observation);
-
-BlockPosition resultingPlacementPosition(const BlockPosition &target,
-                                         const BlockPosition &faceOffset,
-                                         bool targetReplaceable);
-
-struct PlacementDecision {
-  bool cancel = false;
-  const char *reason = "allowed";
-};
-
-PlacementDecision evaluateObsidianPlacement(
-    const PlacementObservation &observation);
-bool cancellationPreventsPlacementAction(const PlacementDecision &decision,
-                                         bool atPacketBoundary);
-bool controllerResultForCancelledPlacement();
-bool callerFallbackForCancelledPlacement();
-
-bool canPublishBedScanResult(std::uint64_t scanGeneration,
-                             std::uint64_t currentGeneration, bool enabled,
-                             bool cancellationRequested);
-
-struct BedDistanceResult {
-  bool known = false;
-  double distance = 0.0;
-  bool outsideWarningRange = false;
-};
-
-BedDistanceResult evaluateBedDistance(const std::optional<BlockPosition> &bed,
-                                      double playerX, double playerY,
-                                      double playerZ, double warningRange);
-bool shouldPreventPlacement(const std::optional<BlockPosition> &ownBed,
-                            const BlockPosition &placedBlock);
 
 struct HeightResult {
   int currentY = 0;
@@ -584,9 +543,7 @@ struct MapHeightResolution {
 const std::vector<MapHeightEntry> &builtInMapHeights();
 std::string normalizeMapName(const std::string &name);
 std::optional<std::string> parseMapScoreboardLine(const std::string &line);
-MapHeightResolution resolveMapHeight(
-    const std::string &mapName,
-    const std::unordered_map<std::string, int> &manualPlacementOverrides = {});
+MapHeightResolution resolveMapHeight(const std::string &mapName);
 
 struct NotificationRecord {
   Tick created = 0;
@@ -611,8 +568,6 @@ enum class HudId : std::size_t {
   Height,
   Resource,
   TeamState,
-  BedDistance,
-  BedStatus,
   Count
 };
 

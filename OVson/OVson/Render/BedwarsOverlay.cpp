@@ -50,9 +50,6 @@ std::vector<std::string> previewLines(HudId id) {
     return {"Iron 48", "Gold 12", "Diamond 4", "Emerald 2"};
   case HudId::TeamState:
     return {"Sharpness 1", "Protection 2", "Trap queued"};
-  case HudId::BedDistance: return {"Bed 28.4m"};
-  case HudId::BedStatus:
-    return {"Red  Bed Alive", "Blue  Bed Destroyed", "Aqua  Bed Unknown"};
   default: return {"HUD preview"};
   }
 }
@@ -67,10 +64,6 @@ void fillPanelLines(HudPanel &panel,
     break;
   case HudId::Resource: panel.lines = snapshot.resourceLines; break;
   case HudId::TeamState: panel.lines = snapshot.upgradeLines; break;
-  case HudId::BedDistance:
-    if (!snapshot.bedLine.empty()) panel.lines = {snapshot.bedLine};
-    break;
-  case HudId::BedStatus: panel.lines = snapshot.bedStatusLines; break;
   default: break;
   }
   if (panel.lines.empty() && preview)
@@ -194,25 +187,17 @@ void render(void *hdcValue, int screenWidth, int screenHeight) {
     fillPanelLines(panel, snapshot, preview);
     switch (panel.id) {
     case HudId::EventTimer:
-      panel.color = settings.dynamicTimerColor && snapshot.timerUrgency >= 2
-                        ? 0xFFFF6B6B
-                        : settings.dynamicTimerColor &&
-                                  snapshot.timerUrgency == 1
-                              ? 0xFFFFD166
-                              : 0xFFFFFFFF;
+      panel.color = snapshot.timerUrgency >= 2     ? 0xFFFF6B6B
+                    : snapshot.timerUrgency == 1   ? 0xFFFFD166
+                                                   : 0xFFFFFFFF;
       break;
     case HudId::Height:
-      panel.color = settings.dynamicHeightColor && snapshot.heightUrgency >= 2
-                        ? 0xFFFF6B6B
-                        : settings.dynamicHeightColor &&
-                                  snapshot.heightUrgency == 1
-                              ? 0xFFFFD166
-                              : 0xFFE7F3FF;
+      panel.color = snapshot.heightUrgency >= 2    ? 0xFFFF6B6B
+                    : snapshot.heightUrgency == 1  ? 0xFFFFD166
+                                                   : 0xFFE7F3FF;
       break;
     case HudId::Resource: panel.color = 0xFFFFE9B5; break;
     case HudId::TeamState: panel.color = 0xFFCDE8FF; break;
-    case HudId::BedDistance: panel.color = 0xFFFFC6C6; break;
-    case HudId::BedStatus: panel.color = 0xFFDDE7F1; break;
     default: break;
     }
     measureAndClamp(panel, screenWidth, screenHeight);

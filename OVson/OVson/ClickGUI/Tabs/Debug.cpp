@@ -69,11 +69,7 @@ void renderDebug(TabCtx &ctx) {
 
     renderDebugToggle("Game Detection", 7,
                       Config::DebugCategory::GameDetection);
-    renderDebugToggle("Bed Detection", 8,
-                      Config::DebugCategory::BedDetection);
     renderDebugToggle("Urchin Service", 9, Config::DebugCategory::Urchin);
-    renderDebugToggle("Bed Defense Sys", 10,
-                      Config::DebugCategory::BedDefense);
     renderDebugToggle("GUI Internals", 11, Config::DebugCategory::GUI);
     renderDebugToggle("General / Other", 12, Config::DebugCategory::General);
     cy += 15;

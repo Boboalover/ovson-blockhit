@@ -12,7 +12,6 @@
 #include "LiquidGlass.h"
 #include "../Render/NotificationManager.h"
 #include "../Render/StatsOverlay.h"
-#include "../Logic/BedDefense/BedDefenseManager.h"
 #include "../Logic/Bedwars/BedwarsConfig.h"
 #include "../Logic/Bedwars/BedwarsCore.h"
 #include "../Logic/Bedwars/BedwarsRuntime.h"
@@ -518,12 +517,6 @@ static void ensureLbWindows() {
     }
     {
       LbWindow w{"UTILS", 264, 44, true, {}};
-      w.mods.push_back({"Bed Defense", &Config::isBedDefenseEnabled,
-                        [](bool b) {
-                          Config::setBedDefenseEnabled(b);
-                          auto *bd = BedDefense::BedDefenseManager::getInstance();
-                          if (b) bd->enable(); else bd->disable();
-                        }, {}});
       w.mods.push_back(
           {"Block-Hit Sound (Client Heuristic)", &Config::isBlockHitSoundEnabled,
            &Config::setBlockHitSoundEnabled,
@@ -576,6 +569,7 @@ static void ensureLbWindows() {
       using OVson::Bedwars::HudId;
       using OVson::Bedwars::HudLayout;
       using OVson::Bedwars::VisibilityMode;
+      using OVson::Bedwars::AlertOutput;
       LbWindow w{"Bedwars", 30, 360, true, {}};
       w.mods.push_back({"Bedwars Tools", &BwConfig::isMasterEnabled,
                         &BwConfig::setMasterEnabled,
@@ -624,40 +618,25 @@ static void ensureLbWindows() {
                  else
                    BwConfig::setVisibilityMode(VisibilityMode::LineOfSight);
                }),
+           subChoice(
+               "Alert Output", {"Alert", "Chat", "Chat + Alert"},
+               []() -> const char * {
+                 return OVson::Bedwars::alertOutputName(
+                     BwConfig::getAlertOutput());
+               },
+               [](const char *value) {
+                 if (strcmp(value, "Chat") == 0)
+                   BwConfig::setAlertOutput(AlertOutput::Chat);
+                 else if (strcmp(value, "Chat + Alert") == 0)
+                   BwConfig::setAlertOutput(AlertOutput::Both);
+                 else
+                   BwConfig::setAlertOutput(AlertOutput::Overlay);
+               }),
            subSlider("Player Range", &BwConfig::getPlayerAlertRange,
-                     &BwConfig::setPlayerAlertRange, 4.0f, 256.0f, "m"),
-           subSlider("Camera Region", &BwConfig::getCameraViewDegrees,
-                     &BwConfig::setCameraViewDegrees, 30.0f, 170.0f, " deg"),
-           subSlider(
-               "Player Cooldown",
-               [] { return (float)BwConfig::getPlayerAlertCooldownMs(); },
-               [](float value) {
-                 BwConfig::setPlayerAlertCooldownMs((int)(value + 0.5f));
-               },
-               250.0f, 60000.0f, "ms")}});
+                     &BwConfig::setPlayerAlertRange, 4.0f, 256.0f, "m")}});
 
-      w.mods.push_back({
-          "Notification Settings", &BwConfig::areSoundsEnabled,
-          &BwConfig::setSoundsEnabled,
-          {subSlider("Default Duration", &BwConfig::getDefaultNotificationSeconds,
-                     &BwConfig::setDefaultNotificationSeconds, 1.0f, 15.0f, "s"),
-           subSlider("Team Upgrade Duration",
-                     &BwConfig::getImportantNotificationSeconds,
-                     &BwConfig::setImportantNotificationSeconds, 1.0f, 15.0f,
-                     "s"),
-           subSlider("Player Item Duration",
-                     &BwConfig::getPlayerNotificationSeconds,
-                     &BwConfig::setPlayerNotificationSeconds, 1.0f, 15.0f,
-                     "s"),
-           subSlider("Warning Duration", &BwConfig::getWarningNotificationSeconds,
-                     &BwConfig::setWarningNotificationSeconds, 1.0f, 15.0f, "s"),
-           subSlider(
-               "Maximum Visible",
-               [] { return (float)BwConfig::getMaximumVisibleNotifications(); },
-               [](float value) {
-                 BwConfig::setMaximumVisibleNotifications((int)(value + 0.5f));
-               },
-               1.0f, 10.0f)}});
+      w.mods.push_back({"Notification Sounds", &BwConfig::areSoundsEnabled,
+                        &BwConfig::setSoundsEnabled});
 
       LbModule hudSettings{
           "HUD and Layout",
@@ -713,77 +692,26 @@ static void ensureLbWindows() {
           }));
       w.mods.push_back(std::move(hudSettings));
 
-      w.mods.push_back({
-          "Map Height Override", [] {
-            return OVson::Bedwars::Runtime::instance().snapshot().maximumPlacementY >= 0;
-          }, [](bool) {},
-          {subSlider(
-               "Current Map Placement Y",
-               [] {
-                 const auto settings = BwConfig::get();
-                 const auto snapshot = OVson::Bedwars::Runtime::instance().snapshot();
-                 const auto resolved = OVson::Bedwars::resolveMapHeight(
-                     snapshot.mapName, settings.mapPlacementOverrides);
-                 return (float)resolved.maximumPlacementY.value_or(100);
-               },
-               [](float value) {
-                 const auto map =
-                     OVson::Bedwars::Runtime::instance().snapshot().mapName;
-                 if (!map.empty())
-                   BwConfig::setMapPlacementOverride(map,
-                                                     (int)(value + 0.5f));
-               },
-               1.0f, 511.0f),
-           subToggle("Reset Current Map Override", [] { return false; },
-                     [](bool enabled) {
-                       if (!enabled) return;
-                       const auto map =
-                           OVson::Bedwars::Runtime::instance().snapshot().mapName;
-                       if (!map.empty()) BwConfig::resetMapPlacementOverride(map);
-                     })}});
-
       for (std::size_t i = 0; i < OVson::Bedwars::kModuleCount; ++i) {
         const Module module = static_cast<Module>(i);
         LbModule item;
         item.name = OVson::Bedwars::moduleName(module);
         item.get = [module] {
-          const bool hookAvailable =
-              module != Module::AntiMisplace ||
-              OVson::Bedwars::Runtime::instance().inputHookAvailable();
-          return OVson::Bedwars::isModuleAvailable(module) && hookAvailable &&
+          return OVson::Bedwars::isModuleAvailable(module) &&
                  BwConfig::isMasterEnabled() &&
                  BwConfig::isModuleEnabled(module);
         };
         item.savedGet = [module] { return BwConfig::isModuleEnabled(module); };
         item.set = [module](bool enabled) {
-          const bool hookAvailable =
-              module != Module::AntiMisplace ||
-              OVson::Bedwars::Runtime::instance().inputHookAvailable();
-          if (OVson::Bedwars::isModuleAvailable(module) && hookAvailable)
+          if (OVson::Bedwars::isModuleAvailable(module))
             BwConfig::setModuleEnabled(module, enabled);
         };
         if (!OVson::Bedwars::isModuleAvailable(module)) {
           item.subs.push_back(subLabel("Unavailable: missing safe hook"));
-        } else if (module == Module::AntiMisplace) {
-          item.subs.push_back(subDynamicLabel(
-              "Anti Misplace status", [] {
-                const auto snapshot =
-                    OVson::Bedwars::Runtime::instance().snapshot();
-                return std::string("Status: ") + snapshot.antiMisplaceStatus;
-              }));
-          item.subs.push_back(subDynamicLabel(
-              "Anti Misplace details", [] {
-                return OVson::Bedwars::Runtime::instance()
-                    .snapshot()
-                    .antiMisplaceDetails;
-              }));
         } else if (module == Module::EventTimers) {
           item.subs.push_back(subToggle("Only Next Event",
                                         &BwConfig::isOnlyNextEvent,
                                         &BwConfig::setOnlyNextEvent));
-          item.subs.push_back(subToggle("Dynamic Color",
-                                        &BwConfig::isDynamicTimerColor,
-                                        &BwConfig::setDynamicTimerColor));
           item.subs.push_back(subSlider("HUD X", &BwConfig::getTimerX,
                                         &BwConfig::setTimerX, 0.0f, 1.0f, "",
                                         true));
@@ -792,26 +720,7 @@ static void ensureLbWindows() {
                                         true));
           item.subs.push_back(subSlider("Scale", &BwConfig::getTimerScale,
                                         &BwConfig::setTimerScale, 0.5f, 2.5f));
-        } else if (module == Module::BedTracker) {
-          item.subs.push_back(subSlider("Warning Range",
-                                        &BwConfig::getBedWarningRange,
-                                        &BwConfig::setBedWarningRange, 5.0f,
-                                        128.0f, "m"));
-          item.subs.push_back(subSlider("Maximum Range",
-                                        &BwConfig::getBedMaximumRange,
-                                        &BwConfig::setBedMaximumRange, 16.0f,
-                                        160.0f, "m"));
-          item.subs.push_back(subSlider(
-              "Scan Interval",
-              [] { return BwConfig::getBedScanIntervalMs() / 1000.0f; },
-              [](float value) {
-                BwConfig::setBedScanIntervalMs((int)(value * 1000.0f + 0.5f));
-              },
-              5.0f, 30.0f, "s"));
         } else if (module == Module::HeightOverlay) {
-          item.subs.push_back(subToggle("Dynamic Color",
-                                        &BwConfig::isDynamicHeightColor,
-                                        &BwConfig::setDynamicHeightColor));
           item.subs.push_back(subSlider("HUD X", &BwConfig::getHeightX,
                                         &BwConfig::setHeightX, 0.0f, 1.0f, "",
                                         true));
@@ -839,9 +748,6 @@ static void ensureLbWindows() {
           item.subs.push_back(subToggle("Resource HUD",
                                         &BwConfig::isResourceHudEnabled,
                                         &BwConfig::setResourceHudEnabled));
-          item.subs.push_back(subToggle("Separate Alerts",
-                                        &BwConfig::isStackedResourceAlerts,
-                                        &BwConfig::setStackedResourceAlerts));
           for (std::size_t resourceIndex = 0;
                resourceIndex < OVson::Bedwars::kResourceCount;
                ++resourceIndex) {
@@ -854,10 +760,6 @@ static void ensureLbWindows() {
                   BwConfig::setResourceEnabled(resource, enabled);
                 }));
           }
-        } else if (module == Module::UpgradeHud) {
-          item.subs.push_back(subToggle("Short Labels",
-                                        &BwConfig::isShortUpgradeLabels,
-                                        &BwConfig::setShortUpgradeLabels));
         }
         w.mods.push_back(std::move(item));
       }
@@ -975,9 +877,6 @@ static void ensureLbWindows() {
                          subToggle("Game Detect",
                             [] { return Config::isDebugEnabled(DC::GameDetection); },
                             [](bool b) { Config::setDebugEnabled(DC::GameDetection, b); }),
-                         subToggle("Bed Detect",
-                            [] { return Config::isDebugEnabled(DC::BedDetection); },
-                            [](bool b) { Config::setDebugEnabled(DC::BedDetection, b); }),
                          subToggle("Urchin",
                             [] { return Config::isDebugEnabled(DC::Urchin); },
                             [](bool b) { Config::setDebugEnabled(DC::Urchin, b); }),
@@ -986,10 +885,7 @@ static void ensureLbWindows() {
                             [](bool b) { Config::setDebugEnabled(DC::Seraph, b); }),
                          subToggle("GUI",
                             [] { return Config::isDebugEnabled(DC::GUI); },
-                            [](bool b) { Config::setDebugEnabled(DC::GUI, b); }),
-                         subToggle("Bed Defense",
-                            [] { return Config::isDebugEnabled(DC::BedDefense); },
-                            [](bool b) { Config::setDebugEnabled(DC::BedDefense, b); })}});
+                            [](bool b) { Config::setDebugEnabled(DC::GUI, b); })}});
       s_lbWins.push_back(std::move(w));
     }
 

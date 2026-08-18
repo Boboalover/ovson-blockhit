@@ -5,19 +5,16 @@
 #include "BedwarsConfig.h"
 #include "../../Config/Config.h"
 #include "../../Java.h"
+#include "../../Chat/ChatSDK.h"
 #include "../../Render/NotificationManager.h"
 #include "../../SDK/McAccess.h"
 #include "../../Utils/Logger.h"
-#include "../BedDefense/BedDefenseManager.h"
-#include "../../JavaHook/BedwarsPlacementHook.h"
 #include "../StatsTracker.internal.h"
 
 #include <Windows.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <iomanip>
-#include <sstream>
 
 namespace OVson::Bedwars {
 namespace {
@@ -104,117 +101,6 @@ int itemMetadata(JNIEnv *env, jobject stack) {
     return -1;
   }
   return result;
-}
-
-bool isObsidianStack(JNIEnv *env, jobject stack) {
-  if (!env || !stack || !lc)
-    return false;
-  jclass stackClass = lc->GetClass("net.minecraft.item.ItemStack");
-  jclass itemClass = lc->GetClass("net.minecraft.item.Item");
-  if (!stackClass || !itemClass)
-    return false;
-  jmethodID getItem = lc->GetMethodID(
-      stackClass, "getItem", "()Lnet/minecraft/item/Item;",
-      "func_77973_b", "b", "()Lzw;");
-  jmethodID byName = lc->GetStaticMethodID(
-      itemClass, "getByNameOrId", "(Ljava/lang/String;)Lnet/minecraft/item/Item;",
-      "func_111206_d", "d", "(Ljava/lang/String;)Lzw;");
-  if (!getItem || !byName)
-    return false;
-  jobject heldItem = env->CallObjectMethod(stack, getItem);
-  clearException(env);
-  jstring registryName = env->NewStringUTF("minecraft:obsidian");
-  jobject obsidianItem = registryName
-                             ? env->CallStaticObjectMethod(itemClass, byName,
-                                                           registryName)
-                             : nullptr;
-  const bool result = heldItem && obsidianItem &&
-                      env->IsSameObject(heldItem, obsidianItem) == JNI_TRUE;
-  clearException(env);
-  if (obsidianItem) env->DeleteLocalRef(obsidianItem);
-  if (registryName) env->DeleteLocalRef(registryName);
-  if (heldItem) env->DeleteLocalRef(heldItem);
-  return result;
-}
-
-bool blockPosition(JNIEnv *env, jobject position, BlockPosition &result) {
-  if (!env || !position || !lc)
-    return false;
-  jclass blockPosClass = lc->GetClass("net.minecraft.util.BlockPos");
-  if (!blockPosClass)
-    return false;
-  jmethodID getX = lc->GetMethodID(blockPosClass, "getX", "()I",
-                                   "func_177958_n", "n");
-  jmethodID getY = lc->GetMethodID(blockPosClass, "getY", "()I",
-                                   "func_177956_o", "o");
-  jmethodID getZ = lc->GetMethodID(blockPosClass, "getZ", "()I",
-                                   "func_177952_p", "p");
-  if (!getX || !getY || !getZ)
-    return false;
-  result = {env->CallIntMethod(position, getX),
-            env->CallIntMethod(position, getY),
-            env->CallIntMethod(position, getZ)};
-  const bool valid = !env->ExceptionCheck();
-  clearException(env);
-  return valid;
-}
-
-bool facingOffset(JNIEnv *env, jobject side, BlockPosition &result) {
-  if (!env || !side || !lc)
-    return false;
-  jclass facingClass = lc->GetClass("net.minecraft.util.EnumFacing");
-  if (!facingClass)
-    return false;
-  jmethodID getX = lc->GetMethodID(facingClass, "getFrontOffsetX", "()I",
-                                   "func_82601_c", "c");
-  jmethodID getY = lc->GetMethodID(facingClass, "getFrontOffsetY", "()I",
-                                   "func_96559_d", "d");
-  jmethodID getZ = lc->GetMethodID(facingClass, "getFrontOffsetZ", "()I",
-                                   "func_82599_e", "e");
-  if (!getX || !getY || !getZ)
-    return false;
-  result = {env->CallIntMethod(side, getX), env->CallIntMethod(side, getY),
-            env->CallIntMethod(side, getZ)};
-  const bool valid = !env->ExceptionCheck();
-  clearException(env);
-  return valid;
-}
-
-std::optional<bool> isTargetReplaceable(JNIEnv *env, jobject world,
-                                        jobject target) {
-  if (!env || !world || !target || !lc)
-    return std::nullopt;
-  jclass worldClass = lc->GetClass("net.minecraft.world.World");
-  jclass stateClass = lc->GetClass("net.minecraft.block.state.IBlockState");
-  jclass blockClass = lc->GetClass("net.minecraft.block.Block");
-  if (!worldClass || !stateClass || !blockClass)
-    return std::nullopt;
-  jmethodID getState = lc->GetMethodID(
-      worldClass, "getBlockState",
-      "(Lnet/minecraft/util/BlockPos;)Lnet/minecraft/block/state/IBlockState;",
-      "func_180495_p", "p", "(Lcj;)Lalz;");
-  jmethodID getBlock = lc->GetMethodID(
-      stateClass, "getBlock", "()Lnet/minecraft/block/Block;",
-      "func_177230_c", "c", "()Lafh;");
-  jmethodID replaceable = lc->GetMethodID(
-      blockClass, "isReplaceable",
-      "(Lnet/minecraft/world/World;Lnet/minecraft/util/BlockPos;)Z",
-      "func_176200_f", "a", "(Ladm;Lcj;)Z");
-  if (!getState || !getBlock || !replaceable)
-    return std::nullopt;
-  jobject state = env->CallObjectMethod(world, getState, target);
-  clearException(env);
-  jobject block = state ? env->CallObjectMethod(state, getBlock) : nullptr;
-  clearException(env);
-  const jboolean result = block
-                              ? env->CallBooleanMethod(block, replaceable,
-                                                       world, target)
-                              : JNI_FALSE;
-  const bool valid = block && !env->ExceptionCheck();
-  clearException(env);
-  if (block) env->DeleteLocalRef(block);
-  if (state) env->DeleteLocalRef(state);
-  return valid ? std::optional<bool>(result == JNI_TRUE) : std::nullopt;
 }
 
 std::optional<Resource> classifyResource(const std::string &rawName) {
@@ -311,7 +197,13 @@ ResourceSnapshot scanInventory(JNIEnv *env, jobject player) {
   return snapshot;
 }
 
-ArmorTier armorTierFor(JNIEnv *env, jobject player) {
+// Returns the best worn armour tier, and through `enchantedOut` whether any
+// worn piece carries an enchantment. On Hypixel the only armour enchant a
+// player can obtain is their team's Protection upgrade, so that flag is a
+// direct read of an upgrade enemies are otherwise never told about.
+ArmorTier armorTierFor(JNIEnv *env, jobject player, bool *enchantedOut) {
+  if (enchantedOut)
+    *enchantedOut = false;
   if (!env || !player || !lc)
     return ArmorTier::None;
   jclass playerClass = lc->GetClass("net.minecraft.entity.player.EntityPlayer");
@@ -322,6 +214,11 @@ ArmorTier armorTierFor(JNIEnv *env, jobject player) {
       "func_71124_b", "q", "(I)Lzx;");
   if (!getArmor)
     return ArmorTier::None;
+  jclass stackClass = lc->GetClass("net.minecraft.item.ItemStack");
+  jmethodID hasEffect = stackClass
+                            ? lc->GetMethodID(stackClass, "hasEffect", "()Z",
+                                              "func_77962_s", "s")
+                            : nullptr;
   ArmorTier best = ArmorTier::None;
   for (int slot = 0; slot < 4; ++slot) {
     jobject stack = env->CallObjectMethod(player, getArmor, slot);
@@ -331,6 +228,11 @@ ArmorTier armorTierFor(JNIEnv *env, jobject player) {
     }
     if (!stack)
       continue;
+    if (enchantedOut && hasEffect &&
+        env->CallBooleanMethod(stack, hasEffect) == JNI_TRUE) {
+      *enchantedOut = true;
+    }
+    clearException(env);
     const std::string name = normalizeText(itemName(env, stack));
     if (name.find("diamond") != std::string::npos)
       best = ArmorTier::Diamond;
@@ -570,7 +472,9 @@ std::vector<PlayerObservation> scanPlayers(JNIEnv *env, jobject world,
         env->IsInstanceOf(player, otherPlayerClass) &&
         env->CallBooleanMethod(player, isSpectator) == JNI_TRUE;
     clearException(env);
-    observation.armor = armorTierFor(env, player);
+    bool armorEnchanted = false;
+    observation.armor = armorTierFor(env, player, &armorEnchanted);
+    observation.armorEnchanted = armorEnchanted;
     jobject held = getHeld ? env->CallObjectMethod(player, getHeld) : nullptr;
     clearException(env);
     if (held) {
@@ -660,8 +564,7 @@ void Runtime::drainLines(Tick now) {
       if (const auto map = parseMapScoreboardLine(clean)) {
         if (m_mapName != *map) {
           m_mapName = *map;
-          m_mapHeight = resolveMapHeight(m_mapName,
-                                         settings.mapPlacementOverrides);
+          m_mapHeight = resolveMapHeight(m_mapName);
           if (settings.debug)
             Logger::info("[Bedwars] map=%s placementLimit=%d source=%s",
                          m_mapName.c_str(),
@@ -698,26 +601,21 @@ void Runtime::drainLines(Tick now) {
     if (const auto destroyed = parseDestroyedBedTeam(line.text)) {
       m_teams.observeBed(*destroyed, BedState::Destroyed, line.received,
                          "server chat");
-      const TeamId localTeam = normalizeTeam(g_localTeam);
-      if (localTeam != TeamId::Unknown && *destroyed == localTeam) {
-        m_ownBedConfirmedDestroyed = true;
-        if (m_ownBed)
-          m_ownBed->alive = false;
-      }
       if (settings.debug)
         Logger::info("[Bedwars] %s bed marked destroyed from chat",
                      teamName(*destroyed));
     }
     if (const auto victim = parseDeathVictim(line.text)) {
-      // On respawn a player's gear resets (starting sword, no armor, no
-      // held potions/tools), but our per-player dedup only ever alerts once
-      // per item/tier for the whole match. Without this, someone who was
-      // alerted for e.g. an Invisibility Potion before dying would never
-      // get alerted again after respawning and picking one up a second
-      // time. Forgetting them here lets the next sighting be treated as a
-      // fresh first-look, same as when a player is seen for the very first
-      // time.
-      m_players.forgetPlayer(*victim);
+      // A death resets the player's inventory but NOT their armor: armor is a
+      // permanent team upgrade in Bedwars, so they respawn wearing exactly
+      // what they died in. Our per-player dedup only alerts once per item or
+      // tier for the whole match, so the inventory half has to be cleared --
+      // otherwise someone alerted for an Invisibility Potion before dying
+      // would never alert again after re-buying one. The armor half must be
+      // kept, or every single kill would re-announce armor the user was
+      // already told about. forgetPlayerLoadout draws exactly that line;
+      // forgetPlayer (full wipe) would get the armor side wrong.
+      m_players.forgetPlayerLoadout(*victim);
       if (settings.debug)
         Logger::info("[Bedwars] cleared alert history for %s (died)",
                      victim->c_str());
@@ -727,8 +625,15 @@ void Runtime::drainLines(Tick now) {
       continue;
     if (signal->kind == ChatSignal::Kind::Upgrade &&
         settings.enabled(Module::UpgradeAlerts)) {
-      notify("Team Upgrade", signal->label + " confirmed from chat", false,
-             true);
+      // Carry the tier through. The parser already counts it, and "Protection
+      // III" tells you something "Protection" does not -- which is whether it
+      // is still worth pushing. Level 1 stays bare because tier-less upgrades
+      // like Heal Pool would otherwise read as "Heal Pool I".
+      std::string label = signal->label;
+      if (signal->level > 1)
+        label += " " + std::to_string(signal->level);
+      notify("Team Upgrade", label + " purchased by your team", false, true,
+             NoticeKind::Important);
     } else if (signal->kind == ChatSignal::Kind::TrapTriggered &&
                settings.enabled(Module::TrapNotifier)) {
       notify("Trap", "Your trap was triggered", true, true);
@@ -863,19 +768,6 @@ void Runtime::tick() {
   drainLines(now);
   const bool active = m_context.phase() == GamePhase::Active ||
                       m_context.phase() == GamePhase::Spectator;
-  auto *bedManager = BedDefense::BedDefenseManager::getInstance();
-  const bool needBeds = active &&
-                        (settings.enabled(Module::BedTracker) ||
-                         settings.enabled(Module::AntiMisplace));
-  if (needBeds && !bedManager->isEnabled())
-    bedManager->enable();
-  else if (!needBeds && !Config::isBedDefenseEnabled() && bedManager->isEnabled())
-    bedManager->disable();
-  if (!needBeds) {
-    if (!m_ownBedConfirmedDestroyed)
-      m_ownBed.reset();
-    m_lastBedScan = 0;
-  }
 
   const bool needResources = active &&
                              (settings.enabled(Module::ResourceTracker) ||
@@ -901,7 +793,7 @@ void Runtime::tick() {
           settings.enabled(Module::PickupAlerts)) {
         const std::string message = "+" + std::to_string(delta.amount) + " " +
                                     resourceName(delta.resource);
-        if (settings.stackedResourceAlerts) {
+        if (Configuration::Fixed::kStackedResourceAlerts) {
           notify(delta.enderChest ? "Ender Chest" : "Resources", message,
                  false, settings.enabled(Module::PickupAlerts));
         } else {
@@ -909,7 +801,8 @@ void Runtime::tick() {
         }
       }
     }
-    if (!settings.stackedResourceAlerts && !resourceMessages.empty()) {
+    if (!Configuration::Fixed::kStackedResourceAlerts &&
+        !resourceMessages.empty()) {
       std::string combined;
       for (const auto &message : resourceMessages) {
         if (!combined.empty())
@@ -940,12 +833,42 @@ void Runtime::tick() {
     options.consumes = settings.enabled(Module::ConsumeAlerts);
     options.items = settings.enabled(Module::ItemAlerts);
     options.maximumDistance = settings.playerAlertRange;
-    options.cooldownMs = static_cast<Tick>(settings.playerAlertCooldownMs);
+    options.cooldownMs =
+        static_cast<Tick>(Configuration::Fixed::kPlayerAlertCooldownMs);
     options.visibility = settings.visibilityMode;
     const auto scanned = scanPlayers(env, world, player, m_playerX, m_playerY,
                                      m_playerZ, settings.visibilityMode,
-                                     settings.cameraViewDegrees);
+                                     Configuration::Fixed::kCameraViewDegrees);
     m_lastScannedPlayers = scanned.size();
+
+    // Raw held-item telemetry. When an alert does not fire there is no way to
+    // tell "the item was never in their hand" apart from "it was, and the
+    // classifier did not recognise the stack" -- the summary counters only
+    // aggregate, and an unrecognised item and an empty hand both leave every
+    // counter at zero. One line per visible enemy with the stack exactly as
+    // the client sees it, next to what it classified as, settles that
+    // immediately. Debug-gated and rate limited, so it costs nothing normally.
+    if (settings.debug &&
+        (m_lastItemDump == 0 || now < m_lastItemDump ||
+         now - m_lastItemDump >= 3000)) {
+      m_lastItemDump = now;
+      for (const auto &seen : scanned) {
+        if (seen.localPlayer || (seen.teammateKnown && seen.teammate))
+          continue;
+        const ImportantItem classified = classifyImportantItem(seen.heldItem);
+        Logger::info(
+            "[Bedwars] held %s dist=%.1f alive=%d spec=%d type='%s' name='%s' "
+            "meta=%d ench=%d using=%d los=%d/%d -> %s",
+            seen.identity.c_str(), seen.distance, seen.alive ? 1 : 0,
+            seen.spectator ? 1 : 0, seen.heldItem.typeName.c_str(),
+            seen.heldItem.displayName.c_str(), seen.heldItem.metadata,
+            seen.heldItem.enchanted ? 1 : 0, seen.usingItem ? 1 : 0,
+            seen.lineOfSightKnown ? 1 : 0, seen.hasLineOfSight ? 1 : 0,
+            classified == ImportantItem::None ? "(unclassified)"
+                                              : importantItemName(classified));
+      }
+    }
+
     const auto alerts = m_players.observe(scanned, options, now, &m_teams);
     m_teams.expire(now);
     for (const auto &alert : alerts) {
@@ -959,58 +882,6 @@ void Runtime::tick() {
     }
   }
 
-  if (active && needBeds &&
-      (m_lastBedScan == 0 ||
-       now - m_lastBedScan >= static_cast<Tick>(settings.bedScanIntervalMs))) {
-    m_lastBedScan = now;
-    if (!m_ownBedConfirmedDestroyed)
-      m_ownBed.reset();
-    std::lock_guard<std::mutex> lock(bedManager->getMutex());
-    std::optional<OwnBed> ownCandidate;
-    bool ownCandidateAmbiguous = false;
-    const TeamId localTeam = normalizeTeam(g_localTeam);
-    for (const auto &[key, bed] : bedManager->getBeds()) {
-      (void)key;
-      const TeamId bedTeam = normalizeTeam(bed.teamColor);
-      if (bedTeam != TeamId::Unknown)
-        m_teams.observeBed(bedTeam, BedState::Alive, now,
-                           bed.teamAssignmentConfident ? "defense color"
-                                                       : "unconfirmed");
-      if (!m_ownBedConfirmedDestroyed && localTeam != TeamId::Unknown &&
-          bedTeam == localTeam &&
-          bed.teamAssignmentConfident && bed.twoBlockStructure) {
-        OwnBed own;
-        own.head = {bed.x, bed.y, bed.z};
-        own.foot = {bed.secondX, bed.secondY, bed.secondZ};
-        own.axis = bed.x != bed.secondX ? BedAxis::X : BedAxis::Z;
-        own.team = bedTeam;
-        own.confident = true;
-        own.alive = true;
-        own.confidenceSource = "two-block structure and defense color";
-        own.worldGeneration = m_context.generation();
-        if (ownCandidate)
-          ownCandidateAmbiguous = true;
-        else
-          ownCandidate = own;
-      }
-    }
-    if (!ownCandidateAmbiguous && ownCandidate)
-      m_ownBed = std::move(ownCandidate);
-  }
-
-  const BedDistanceResult bedDistance =
-      evaluateBedDistance(m_ownBed ? std::optional<BlockPosition>(m_ownBed->head)
-                                   : std::nullopt,
-                          m_playerX, m_playerY, m_playerZ,
-                          settings.bedWarningRange);
-  if (active && settings.enabled(Module::BedTracker) &&
-      bedDistance.outsideWarningRange &&
-      (m_lastBedWarning == 0 || now - m_lastBedWarning >= 15000)) {
-    m_lastBedWarning = now;
-    notify("Bed Range", "You are outside the configured bed range", true,
-           true);
-  }
-
   if (active && settings.enabled(Module::TrapNotifier) &&
       m_chat.trapState() == TrapState::Missing) {
     const Tick interval = static_cast<Tick>(settings.trapReminderSeconds) * 1000;
@@ -1021,7 +892,7 @@ void Runtime::tick() {
     }
   }
 
-  rebuildSnapshot(now, m_playerY, bedDistance);
+  rebuildSnapshot(now, m_playerY);
   logSummary(now, settings, m_lastScannedPlayers,
              active ? "active" : "lifecycle inactive");
   if (player)
@@ -1030,8 +901,7 @@ void Runtime::tick() {
     env->DeleteLocalRef(world);
 }
 
-void Runtime::rebuildSnapshot(Tick now, double playerY,
-                              const BedDistanceResult &bedDistance) {
+void Runtime::rebuildSnapshot(Tick now, double playerY) {
   const auto settings = Configuration::get();
   RenderSnapshot snapshot;
   snapshot.active = m_context.phase() == GamePhase::Active ||
@@ -1050,44 +920,6 @@ void Runtime::rebuildSnapshot(Tick now, double playerY,
   }
   if (m_context.lastObservation().replay)
     snapshot.lifecycleStatus = "In replay";
-  PlacementObservation readiness;
-  readiness.masterEnabled = settings.masterEnabled;
-  readiness.moduleEnabled =
-      settings.modules[static_cast<std::size_t>(Module::AntiMisplace)];
-  readiness.hookAvailable = inputHookAvailable();
-  readiness.activeMatch = m_context.phase() == GamePhase::Active;
-  readiness.worldCurrent =
-      m_ownBed && m_ownBed->worldGeneration == m_context.generation();
-  readiness.ownBedDestroyed = m_ownBedConfirmedDestroyed;
-  readiness.localTeam = normalizeTeam(g_localTeam);
-  readiness.ownBed = m_ownBed;
-  snapshot.antiMisplaceStatus =
-      antiMisplaceStatusName(antiMisplaceStatus(readiness));
-  std::ostringstream antiDetails;
-  antiDetails << "Team " << teamName(readiness.localTeam) << "; hook "
-              << (readiness.hookAvailable ? "installed" : "unavailable")
-              << "; generation " << m_context.generation();
-  if (!readiness.hookAvailable) {
-    const std::string failure = BedwarsPlacementHook::lastFailure();
-    if (!failure.empty()) antiDetails << "; hook reason " << failure;
-  }
-  if (Config::isForgeEnvironment())
-    antiDetails << "; own-bed scanner unavailable in Forge environment";
-  if (m_ownBed) {
-    antiDetails << "; bed " << m_ownBed->head.x << ',' << m_ownBed->head.y
-                << ',' << m_ownBed->head.z << " to " << m_ownBed->foot.x
-                << ',' << m_ownBed->foot.y << ',' << m_ownBed->foot.z
-                << "; axis " << (m_ownBed->axis == BedAxis::X ? 'X' : 'Z')
-                << "; source "
-                << (m_ownBed->confidenceSource.empty()
-                        ? "unknown"
-                        : m_ownBed->confidenceSource);
-  } else {
-    antiDetails << "; bed unknown";
-  }
-  if (!m_lastPlacementReason.empty())
-    antiDetails << "; last " << m_lastPlacementReason;
-  snapshot.antiMisplaceDetails = antiDetails.str();
   if (!snapshot.active) {
     std::lock_guard<std::mutex> lock(m_snapshotMutex);
     m_snapshot = std::move(snapshot);
@@ -1120,7 +952,7 @@ void Runtime::rebuildSnapshot(Tick now, double playerY,
   }
 
   if (settings.enabled(Module::HeightOverlay)) {
-    m_mapHeight = resolveMapHeight(m_mapName, settings.mapPlacementOverrides);
+    m_mapHeight = resolveMapHeight(m_mapName);
     if (!m_mapHeight.maximumPlacementY && settings.heightLimitOverride > 0) {
       m_mapHeight.maximumPlacementY = settings.heightLimitOverride;
       m_mapHeight.maximumPlayerY = settings.heightLimitOverride + 1;
@@ -1150,18 +982,22 @@ void Runtime::rebuildSnapshot(Tick now, double playerY,
       return known ? std::to_string(level) : std::string("?");
     };
     snapshot.upgradeLines.push_back(
-        std::string(settings.shortUpgradeLabels ? "Sharp " : "Sharpness ") +
+        std::string(Configuration::Fixed::kShortUpgradeLabels ? "Sharp "
+                                                              : "Sharpness ") +
         knownLevel(upgrade.sharpness, upgrade.sharpnessKnown));
     snapshot.upgradeLines.push_back(
-        std::string(settings.shortUpgradeLabels ? "Prot " : "Protection ") +
+        std::string(Configuration::Fixed::kShortUpgradeLabels
+                        ? "Prot "
+                        : "Protection ") +
         knownLevel(upgrade.protection, upgrade.protectionKnown));
     snapshot.upgradeLines.push_back(
         "Forge " + knownLevel(upgrade.forge, upgrade.forgeKnown));
     snapshot.upgradeLines.push_back(
         "Haste " + knownLevel(upgrade.haste, upgrade.hasteKnown));
     snapshot.upgradeLines.push_back(
-        std::string(settings.shortUpgradeLabels ? "Feather "
-                                                : "Feather Falling ") +
+        std::string(Configuration::Fixed::kShortUpgradeLabels
+                        ? "Feather "
+                        : "Feather Falling ") +
         knownLevel(upgrade.featherFalling, upgrade.featherFallingKnown));
     if (upgrade.healPool)
       snapshot.upgradeLines.push_back("Heal Pool");
@@ -1174,15 +1010,6 @@ void Runtime::rebuildSnapshot(Tick now, double playerY,
                                                        : "Trap ?");
   }
 
-  for (const auto &team : m_teams.teams()) {
-    std::string line = std::string(teamName(team.id)) + "  Bed ";
-    line += team.bed == BedState::Alive
-                ? "Alive"
-                : team.bed == BedState::Destroyed ? "Destroyed" : "Unknown";
-    line += team.sharpnessObserved ? "  Sharpness" : "";
-    snapshot.bedStatusLines.push_back(std::move(line));
-  }
-
   if (settings.enabled(Module::ResourceTracker) &&
       m_latestResources.inventoryValid) {
     for (std::size_t i = 0; i < kResourceCount; ++i) {
@@ -1193,51 +1020,102 @@ void Runtime::rebuildSnapshot(Tick now, double playerY,
     }
   }
 
-  if (settings.enabled(Module::BedTracker)) {
-    if (bedDistance.known) {
-      std::ostringstream text;
-      text << std::fixed << std::setprecision(1) << "Bed "
-           << bedDistance.distance << "m";
-      snapshot.bedLine = text.str();
-    } else {
-      snapshot.bedLine = "Bed unknown";
-    }
-  }
   std::lock_guard<std::mutex> lock(m_snapshotMutex);
   m_snapshot = std::move(snapshot);
 }
+
+namespace {
+
+// Maps an overlay segment colour back to the Minecraft formatting code that
+// renders the same colour in chat. Derived from the team palette rather than
+// hardcoded, so the two surfaces cannot drift apart if the palette changes.
+// Anything not in the palette is body text and renders white.
+const char *argbToFormattingCode(std::uint32_t argb) {
+  for (std::size_t i = 0; i < kTeamCount; ++i) {
+    const TeamId team = static_cast<TeamId>(i);
+    if (teamArgb(team) == argb)
+      return teamFormattingCode(team);
+  }
+  return "f";
+}
+
+// Renders an alert as a single chat line: an [OVSON] tag, then the alert
+// title, then the message. Segment colours are reused where the alert
+// provides them so a player's name keeps their team colour in chat exactly as
+// it does on the overlay; alerts without segments fall back to plain white.
+std::string chatLine(const std::string &title, const std::string &message,
+                     const std::vector<MessageSegment> &segments,
+                     bool warning) {
+  const char *S = "\xC2\xA7";
+  std::string line = std::string(S) + "0[" + S + "r" + S + "cO" + S + "6V" + S +
+                     "eS" + S + "aO" + S + "bN" + S + "0]" + S + "r ";
+  line += std::string(S) + (warning ? "c" : "7") + title + S + "8: " + S + "r";
+  if (segments.empty()) {
+    line += std::string(S) + "f" + message;
+    return line;
+  }
+  for (const auto &segment : segments)
+    line += std::string(S) + argbToFormattingCode(segment.argb) + segment.text;
+  return line;
+}
+
+} // namespace
 
 void Runtime::notify(const std::string &title, const std::string &message,
                      bool warning, bool playSound, NoticeKind kind,
                      const std::vector<MessageSegment> &segments) {
   const auto settings = Configuration::get();
-  float duration = settings.defaultNotificationSeconds;
+  float duration = Configuration::Fixed::kDefaultNotificationSeconds;
   switch (kind) {
-  case NoticeKind::Important: duration = settings.importantNotificationSeconds; break;
-  case NoticeKind::Player: duration = settings.playerNotificationSeconds; break;
-  case NoticeKind::Warning: duration = settings.warningNotificationSeconds; break;
+  case NoticeKind::Important:
+    duration = Configuration::Fixed::kImportantNotificationSeconds; break;
+  case NoticeKind::Player:
+    duration = Configuration::Fixed::kPlayerNotificationSeconds; break;
+  case NoticeKind::Warning:
+    duration = Configuration::Fixed::kWarningNotificationSeconds; break;
   default: break;
   }
   if (warning)
-    duration = settings.warningNotificationSeconds;
-  if (segments.empty()) {
-    Render::NotificationManager::getInstance()->add(
-        title, message, warning ? Render::NotificationType::Warning
-                                : Render::NotificationType::Info,
-        duration, static_cast<std::size_t>(settings.maximumVisibleNotifications));
-  } else {
-    std::vector<Render::NotificationSegment> rich;
-    rich.reserve(segments.size());
-    for (const auto &segment : segments)
-      rich.push_back({segment.text, segment.argb});
-    Render::NotificationManager::getInstance()->addRich(
-        title, rich, warning ? Render::NotificationType::Warning
-                             : Render::NotificationType::Info,
-        duration, static_cast<std::size_t>(settings.maximumVisibleNotifications));
+    duration = Configuration::Fixed::kWarningNotificationSeconds;
+  const AlertOutput output = settings.alertOutput;
+  const bool toOverlay =
+      output == AlertOutput::Overlay || output == AlertOutput::Both;
+  const bool toChat =
+      output == AlertOutput::Chat || output == AlertOutput::Both;
+
+  if (toOverlay) {
+    if (segments.empty()) {
+      Render::NotificationManager::getInstance()->add(
+          title, message, warning ? Render::NotificationType::Warning
+                                  : Render::NotificationType::Info,
+          duration,
+          static_cast<std::size_t>(
+              Configuration::Fixed::kMaximumVisibleNotifications));
+    } else {
+      std::vector<Render::NotificationSegment> rich;
+      rich.reserve(segments.size());
+      for (const auto &segment : segments)
+        rich.push_back({segment.text, segment.argb});
+      Render::NotificationManager::getInstance()->addRich(
+          title, rich, warning ? Render::NotificationType::Warning
+                               : Render::NotificationType::Info,
+          duration,
+          static_cast<std::size_t>(
+              Configuration::Fixed::kMaximumVisibleNotifications));
+    }
   }
+
+  if (toChat)
+    ChatSDK::showClientMessage(chatLine(title, message, segments, warning));
   if (settings.debug)
-    Logger::info("[Bedwars] notification title=%s duration=%.1fs queueLimit=%d",
-                 title.c_str(), duration, settings.maximumVisibleNotifications);
+    // Log the message itself, not just the title. Every Bedwars alert shares
+    // one of two titles, so a log of titles alone cannot answer "did the
+    // Ender Pearl alert fire?" -- which is the only question anyone ever
+    // reads this line to answer.
+    Logger::info("[Bedwars] notification title=%s text=\"%s\" duration=%.1fs "
+                 "queueLimit=%d",
+                 title.c_str(), message.c_str(), duration,
+                 Configuration::Fixed::kMaximumVisibleNotifications);
   if (!playSound || !settings.sounds || !lc)
     return;
   JNIEnv *env = lc->getEnv();
@@ -1271,27 +1149,16 @@ void Runtime::logSummary(Tick now, const Configuration::Settings &settings,
   m_lastDiagnosticSummary = now;
   const auto &reject = m_players.rejectionCounts();
   const auto &playerDiag = m_players.diagnostics();
-  auto *beds = BedDefense::BedDefenseManager::getInstance();
-  std::size_t bedCount = 0;
-  std::size_t confidentBeds = 0;
-  {
-    std::lock_guard<std::mutex> lock(beds->getMutex());
-    bedCount = beds->getBeds().size();
-    for (const auto &[key, bed] : beds->getBeds()) {
-      (void)key;
-      if (bed.teamAssignmentConfident) ++confidentBeds;
-    }
-  }
   Logger::info(
       "[Bedwars] summary master=%d phase=%d hypixel=%d mode=%d replay=%d "
       "localEntity=%d localTeam=%s map=%s limit=%d players=%d local=%d "
       "teammate=%d dead=%d spectator=%d range=%d los=%d camera=%d "
       "visibilityUnknown=%d invalidIdentity=%d emitted=%d cooldown=%d "
       "swordGlint=%d sharpDedupe=%d potions=%d potionDedupe=%d kb=%d "
-      "kbDedupe=%d unknownItems=%d ignoredItems=%d itemDedupe=%d beds=%d "
-      "confidentBeds=%d ownBed=%d antiHook=%d resourcesValid=%d overlay=%s "
-      "modules=%d%d%d%d%d%d%d%d%d%d%d%d%d "
-      "hud=%d%d%d%d%d%d queueDrops=%llu",
+      "kbDedupe=%d unknownItems=%d ignoredItems=%d itemDedupe=%d "
+      "resourcesValid=%d overlay=%s "
+      "modules=%d%d%d%d%d%d%d%d%d%d%d "
+      "hud=%d%d%d%d queueDrops=%llu",
       settings.masterEnabled ? 1 : 0, static_cast<int>(m_context.phase()),
       m_context.lastObservation().onHypixel ? 1 : 0,
       m_context.lastObservation().bedwarsMode ? 1 : 0,
@@ -1322,15 +1189,11 @@ void Runtime::logSummary(Tick now, const Configuration::Settings &settings,
       static_cast<int>(playerDiag.knockbackDuplicates),
       static_cast<int>(playerDiag.unknownItems),
       static_cast<int>(playerDiag.ignoredItems),
-      static_cast<int>(playerDiag.itemDuplicates), static_cast<int>(bedCount),
-      static_cast<int>(confidentBeds), m_ownBed ? 1 : 0,
-      inputHookAvailable() ? 1 : 0,
+      static_cast<int>(playerDiag.itemDuplicates),
       m_latestResources.inventoryValid ? 1 : 0,
       overlayReason ? overlayReason : "unknown",
       settings.enabled(Module::EventTimers) ? 1 : 0,
       settings.enabled(Module::ShopHelper) ? 1 : 0,
-      settings.enabled(Module::AntiMisplace) ? 1 : 0,
-      settings.enabled(Module::BedTracker) ? 1 : 0,
       settings.enabled(Module::HeightOverlay) ? 1 : 0,
       settings.enabled(Module::UpgradeAlerts) ? 1 : 0,
       settings.enabled(Module::ConsumeAlerts) ? 1 : 0,
@@ -1342,7 +1205,6 @@ void Runtime::logSummary(Tick now, const Configuration::Settings &settings,
       settings.enabled(Module::UpgradeHud) ? 1 : 0,
       settings.hud[0].visible ? 1 : 0, settings.hud[1].visible ? 1 : 0,
       settings.hud[2].visible ? 1 : 0, settings.hud[3].visible ? 1 : 0,
-      settings.hud[4].visible ? 1 : 0, settings.hud[5].visible ? 1 : 0,
       static_cast<unsigned long long>(m_totalDroppedLines.load()));
 
   std::string rejectionDetails;
@@ -1364,7 +1226,6 @@ void Runtime::logSummary(Tick now, const Configuration::Settings &settings,
 }
 
 void Runtime::resetState(const char *reason) {
-  BedDefense::BedDefenseManager::getInstance()->onWorldChange();
   {
     std::lock_guard<std::mutex> lock(m_queueMutex);
     m_lines.clear();
@@ -1379,17 +1240,10 @@ void Runtime::resetState(const char *reason) {
   m_scoreboardEventObserved = 0;
   m_lastInventoryScan = 0;
   m_lastPlayerScan = 0;
-  m_lastBedScan = 0;
   m_lastTrapReminder = 0;
-  m_lastBedWarning = 0;
   m_lastScannedPlayers = 0;
   m_mapHeight = {};
-  m_ownBed.reset();
-  m_ownBedConfirmedDestroyed = false;
-  m_lastPlacementReason.clear();
   m_lastRejectionDetails.clear();
-  m_lastPlacementLog = 0;
-  m_lastPlacementNotice = 0;
   if (Configuration::isDebugEnabled())
     Logger::info("[Bedwars] state reset: %s", reason ? reason : "unknown");
 }
@@ -1404,84 +1258,6 @@ void Runtime::reset(const char *reason) {
   m_snapshot = {};
 }
 
-void Runtime::setInputHookAvailable(bool available) {
-  m_inputHookAvailable.store(available, std::memory_order_release);
-}
-
-bool Runtime::shouldCancelObsidianPlacement(void *envPtr, void *playerPtr,
-                                            void *worldPtr, void *stackPtr,
-                                            void *targetPtr, void *sidePtr) {
-  const auto settings = Configuration::get();
-  JNIEnv *env = static_cast<JNIEnv *>(envPtr);
-  jobject player = static_cast<jobject>(playerPtr);
-  jobject world = static_cast<jobject>(worldPtr);
-  jobject stack = static_cast<jobject>(stackPtr);
-  jobject target = static_cast<jobject>(targetPtr);
-  jobject side = static_cast<jobject>(sidePtr);
-  PlacementObservation observation;
-  observation.masterEnabled = settings.masterEnabled;
-  observation.moduleEnabled =
-      settings.modules[static_cast<std::size_t>(Module::AntiMisplace)];
-  observation.hookAvailable = inputHookAvailable();
-  observation.activeMatch = m_context.phase() == GamePhase::Active;
-  observation.worldCurrent = world && m_ownBed &&
-                             m_ownBed->worldGeneration == m_context.generation();
-  observation.ownBedDestroyed = m_ownBedConfirmedDestroyed;
-  observation.localTeam = normalizeTeam(g_localTeam);
-  observation.ownBed = m_ownBed;
-  observation.obsidianHeld = env && isObsidianStack(env, stack);
-  BlockPosition targetPosition;
-  BlockPosition offset;
-  const auto replaceable = isTargetReplaceable(env, world, target);
-  if (blockPosition(env, target, targetPosition) &&
-      facingOffset(env, side, offset) && replaceable.has_value()) {
-    observation.resultingPosition = resultingPlacementPosition(
-        targetPosition, offset, *replaceable);
-    observation.targetKnown = true;
-  }
-
-  const PlacementDecision decision = evaluateObsidianPlacement(observation);
-  const Tick now = GetTickCount64();
-  const bool reasonChanged = m_lastPlacementReason != decision.reason;
-  m_lastPlacementReason = decision.reason;
-  if (settings.debug &&
-      (reasonChanged || m_lastPlacementLog == 0 ||
-       now - m_lastPlacementLog >= 2000)) {
-    m_lastPlacementLog = now;
-    Logger::info("[Bedwars] placement callback held=%s target=%d,%d,%d "
-                 "face=%d,%d,%d replaceable=%d result=%d,%d,%d cancel=%d "
-                 "reason=%s propagated=pending",
-                 observation.obsidianHeld ? "minecraft:obsidian" : "other",
-                 targetPosition.x, targetPosition.y, targetPosition.z,
-                 offset.x, offset.y, offset.z,
-                 replaceable.value_or(false) ? 1 : 0,
-                 observation.resultingPosition.x,
-                 observation.resultingPosition.y,
-                 observation.resultingPosition.z,
-                 decision.cancel ? 1 : 0, decision.reason);
-  }
-  (void)player;
-  return decision.cancel;
-}
-
-void Runtime::onPlacementCancellationResult(bool propagated, int errorCode) {
-  const auto settings = Configuration::get();
-  const Tick now = GetTickCount64();
-  m_lastPlacementReason = propagated
-                              ? "outside own-bed shell; cancellation propagated"
-                              : "cancellation failed open";
-  if (settings.debug)
-    Logger::info("[Bedwars] placement cancellation propagated=%d jvmtiError=%d",
-                 propagated ? 1 : 0, errorCode);
-  if (propagated &&
-      (m_lastPlacementNotice == 0 || now < m_lastPlacementNotice ||
-       now - m_lastPlacementNotice >= 750)) {
-    m_lastPlacementNotice = now;
-    notify("Anti Misplace", "Obsidian must stay in the own-bed shell", true,
-           false, NoticeKind::Warning);
-  }
-}
-
 void Runtime::shutdown() {
   m_shuttingDown.store(true, std::memory_order_release);
   {
@@ -1493,7 +1269,6 @@ void Runtime::shutdown() {
       env->DeleteGlobalRef(static_cast<jobject>(m_worldReference));
   }
   m_worldReference = nullptr;
-  m_inputHookAvailable.store(false, std::memory_order_release);
   reset("shutdown");
 }
 

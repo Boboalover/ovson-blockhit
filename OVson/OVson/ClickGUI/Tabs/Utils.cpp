@@ -5,7 +5,6 @@
 #include "../../Render/RenderUtils.h"
 #include "../../Render/NotificationManager.h"
 #include "../../Config/Config.h"
-#include "../../Logic/BedDefense/BedDefenseManager.h"
 #include "../../Logic/BlockHitSound.h"
 #include "../../Utils/ReplaySpammer.h"
 #include <cstdio>
@@ -29,42 +28,6 @@ void renderUtils(TabCtx &ctx) {
 
   g_guiFont.drawString(cx, cy, "Utilities", applyAlpha(0xFFFFFFFF, alpha));
   cy += 40;
-  bool hCard = isHovered(mx, my, mainX + 190, cy - 10, g_w - 210, 95);
-  glDisable(GL_TEXTURE_2D);
-  drawThemeCard(mainX + 190, cy - 10, g_w - 210, 95, hCard, alpha);
-  glEnable(GL_TEXTURE_2D);
-
-  drawSectionLabel(cx, cy, "Bed Defense", alpha);
-
-  g_guiFont.drawString(cx, cy + 18,
-                       "X-Ray style outlines for bed defense blocks",
-                       applyAlpha(0xFFA0A0A5, alpha));
-  g_guiFont.drawString(cx, cy + 42,
-                       "WARNING: THIS PROVIDES AN UNFAIR ADVANTAGE.",
-                       applyAlpha(0xFFFF5555, alpha), 0.4f);
-  g_guiFont.drawString(cx, cy + 54,
-                       "YOU WILL BE BLACKLISTED IF CAUGHT. USE AT OWN RISK.",
-                       applyAlpha(0xFFFF5555, alpha), 0.4f);
-
-  bool enabled = Config::isBedDefenseEnabled();
-  glDisable(GL_TEXTURE_2D);
-  float swX = mainX + g_w - 65;
-  drawSwitch(0, swX, cy + 15, enabled, hCard, alpha);
-  glEnable(GL_TEXTURE_2D);
-  if (clickEvent && hCard) {
-    bool newState = !enabled;
-    Config::setBedDefenseEnabled(newState);
-    if (newState)
-      BedDefense::BedDefenseManager::getInstance()->enable();
-    else
-      BedDefense::BedDefenseManager::getInstance()->disable();
-
-    NotificationManager::getInstance()->add(
-        "Module", newState ? "Bed Defense Activated" : "Bed Defense Disabled",
-        newState ? NotificationType::Success : NotificationType::Warning);
-  }
-  cy += 115;
-
   g_guiFont.drawString(cx, cy, "Chat Bypasser",
                        applyAlpha(0xFFFFFFFF, alpha));
 

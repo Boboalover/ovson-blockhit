@@ -120,24 +120,12 @@ std::optional<std::string> parseMapScoreboardLine(const std::string &line) {
   return name;
 }
 
-MapHeightResolution resolveMapHeight(
-    const std::string &mapName,
-    const std::unordered_map<std::string, int> &manualPlacementOverrides) {
+MapHeightResolution resolveMapHeight(const std::string &mapName) {
   MapHeightResolution result;
   const std::string normalized = normalizeMapName(mapName);
   const std::string compactName = compact(normalized);
   if (normalized.empty())
     return result;
-  for (const auto &[name, placement] : manualPlacementOverrides) {
-    if (compact(normalizeMapName(name)) == compactName && placement >= 1 &&
-        placement <= 511) {
-      result.canonicalName = normalizeMapName(name);
-      result.maximumPlacementY = placement;
-      result.maximumPlayerY = placement + 1;
-      result.overridden = true;
-      return result;
-    }
-  }
   for (const auto &entry : builtInMapHeights()) {
     if (compact(entry.canonicalName) == compactName) {
       result.canonicalName = entry.canonicalName;

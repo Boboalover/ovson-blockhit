@@ -1,5 +1,4 @@
 #include "JavaHook.h"
-#include "BedwarsPlacementHook.h"
 #include "../Java.h"
 #include "../Utils/Logger.h"
 #include <jvmti.h>
@@ -150,24 +149,8 @@ void initialize() {
         return;
     }
 
-    jvmtiCapabilities placementCaps = {};
-    placementCaps.can_generate_breakpoint_events = 1;
-    placementCaps.can_access_local_variables = 1;
-    placementCaps.can_force_early_return = 1;
-    placementCaps.can_get_bytecodes = 1;
-    placementCaps.can_get_constant_pool = 1;
-    const jvmtiError placementCapsError =
-        s_jvmti->AddCapabilities(&placementCaps);
-    const bool placementCapabilitiesAvailable =
-        placementCapsError == JVMTI_ERROR_NONE;
-    if (!placementCapabilitiesAvailable) {
-        Logger::error("[Bedwars] placement hook capabilities unavailable (error %d)",
-                      placementCapsError);
-    }
-
     jvmtiEventCallbacks callbacks = {};
     callbacks.ClassFileLoadHook = classFileLoadHookCallback;
-    callbacks.Breakpoint = BedwarsPlacementHook::onBreakpoint;
     err = s_jvmti->SetEventCallbacks(&callbacks, sizeof(callbacks));
     if (err != JVMTI_ERROR_NONE) {
         Logger::error("[JavaHook] Failed to set event callbacks (error %d)", err);
@@ -231,8 +214,6 @@ void initialize() {
     }
 
     s_active = true;
-    BedwarsPlacementHook::initialize(placementCapabilitiesAvailable ? s_jvmti
-                                                                    : nullptr);
     Logger::info("[JavaHook] JVMTI bytecode hook system active. Transformer: %s",
                  s_transformerClass ? "ready" : "pending");
 }
@@ -241,8 +222,6 @@ void shutdown() {
     if (!s_jvmti) return;
 
     Logger::info("[JavaHook] Shutting down... (%d classes transformed)", s_transformCount.load());
-
-    BedwarsPlacementHook::shutdown();
 
     s_jvmti->SetEventNotificationMode(JVMTI_DISABLE,
                                        JVMTI_EVENT_CLASS_FILE_LOAD_HOOK, nullptr);
