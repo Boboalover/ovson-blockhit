@@ -3,8 +3,10 @@
 Fork: `Boboalover/ovson-blockhit` · base: `alperenproo/ovson`
 Two features: **client-side block-hit sound** and **Bedwars Tools**.
 
-**57 files changed, +12 280 / −2 999** (line-ending noise excluded — the fork's
-working tree is CRLF, so diff with `--ignore-cr-at-eol` or the stat is useless).
+**75 files changed, +13 111 / −3 089** against `alperenproo/ovson@main`
+(line-ending noise excluded — the fork's working tree is CRLF, so diff with
+`--ignore-cr-at-eol` or the stat is useless). Of those, 57 are DLL sources
+(§2–§6), 10 are the loader (§7), and the rest are docs and `.gitignore`.
 
 Verified before writing this: all three deterministic test suites pass
 (**68 + 56 + 66 = 190 checks**), the x64 DLL links clean, and every JNI change
@@ -264,6 +266,37 @@ discarded for old files).
 `STB_IMAGE_IMPLEMENTATION`. `Utils/StbImageImpl.cpp` now owns it — it is
 deliberately excluded from the `/W4` list, since `stb_image.h` is not
 warning-clean.
+
+---
+
+## 7. OVsonLoader — +351 / −88
+
+Ten files, none of it feature work: it is what makes the loader survive being
+closed while an injection is in flight.
+
+- **`slint_ui/shutdown_coordinator.{cpp,h}` (new).** A tiny, platform-free state
+  machine over the nine teardown stages (`Running` → `Requested` →
+  `EventLoopExited` → … → `Complete`). `request()` is idempotent and stages can
+  only advance, so a second close request or an out-of-order stage cannot walk
+  the sequence backwards. Being free of Win32 is what lets it be unit-tested —
+  it is covered by the `OVson.Bedwars` target.
+- **`injector.cpp` — cooperative cancellation.** The injector has several
+  multi-second waits (up to 3 s polling for `OVsonAlive_<pid>`, 1 s after a
+  uninject request). They now poll `g_stopping` and bail out, instead of
+  keeping the process alive after the user has already closed the window.
+- **`injector.cpp` — per-PID loader-hint events.** The loader publishes
+  `Local\OVsonLoaderHint_<pid>` before injecting; the DLL consumes it in
+  `init()` to tell "launched via OVsonLoader" from "someone injected the DLL
+  by hand" and only shows the download nag in the second case. The handles are
+  tracked in a mutex-guarded map and closed in `shutdownInjector()`.
+- **`injector.cpp` — `uninjectPid` probes three namespaces** (`Local\`, ``,
+  `Global\`) when opening `OVsonUninject_<pid>`. §4 is the DLL half of that.
+- **`tray_icon.{cpp,h}`** — `beginShutdown()` removes the notification-area
+  icon immediately, leaving subclass teardown to the normal UI-thread stage, so
+  the icon does not linger after the window is gone.
+- **`updater.{cpp,h}`, `main.cpp`, `CMakeLists.txt`** — cancellation plumbed
+  through the update check, and the shutdown coordinator wired into the app's
+  exit path.
 
 ---
 
