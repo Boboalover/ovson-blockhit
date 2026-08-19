@@ -132,6 +132,11 @@ Java_net_ovson_api_hook_PacketFilterHook_onServerPacket(
 static bool s_injected = false;
 static jclass s_hookCls = nullptr;
 static jobject s_hookObj = nullptr;
+// The Netty channel we actually installed the handler on. Hypixel moves you
+// between backends and the client builds a NEW NetworkManager and a NEW
+// channel when it does; the handler stays behind on the dead one. Keeping a
+// global ref lets us notice that and re-install instead of going quiet.
+static jobject s_hookedChannel = nullptr;
 static ULONGLONG s_nextAttempt = 0;
 static bool s_addFailureLogged = false;
 
@@ -162,7 +167,19 @@ void PacketHook::update() {
     // swing/hurt/health ordering windows.
     BlockHitSound::update(env);
 
-    if (s_injected) return;
+    // Being injected is not a terminal state. It used to be -- this was a
+    // bare `if (s_injected) return;` -- and that is why block-hit sound went
+    // silent the moment the connection was replaced: the handler sat on a
+    // channel nobody was reading from any more, every counter stayed at
+    // zero, and nothing in the log said why. Keep looking, just cheaply:
+    // once a second costs far less than a frame and is far more often than
+    // a player changes servers.
+    if (s_injected) {
+        static ULONGLONG nextChannelCheck = 0;
+        const ULONGLONG checkNow = GetTickCount64();
+        if (checkNow < nextChannelCheck) return;
+        nextChannelCheck = checkNow + 1000;
+    }
 
     jclass mcCls = lc->GetClass("net.minecraft.client.Minecraft");
     if (!mcCls) { reportStall("Minecraft class"); return; }
@@ -380,6 +397,32 @@ void PacketHook::update() {
         return;
     }
 
+    // Still the same connection we hooked? Then there is nothing to do. A
+    // different channel object means the old one is gone and our handler
+    // went with it.
+    if (s_injected) {
+        const bool sameChannel =
+            s_hookedChannel && env->IsSameObject(s_hookedChannel, channel);
+        if (sameChannel) {
+            env->DeleteLocalRef(channel);
+            env->DeleteLocalRef(nmCls);
+            env->DeleteLocalRef(nhCls);
+            env->DeleteLocalRef(networkManager);
+            env->DeleteLocalRef(nh);
+            env->DeleteLocalRef(mcObj);
+            return;
+        }
+        Logger::info("[PacketHook] Connection replaced; re-injecting "
+                     "PacketFilterHook into the new Netty pipeline");
+        if (s_hookedChannel) {
+            env->DeleteGlobalRef(s_hookedChannel);
+            s_hookedChannel = nullptr;
+        }
+        s_injected = false;
+        s_addFailureLogged = false;
+        s_nextAttempt = 0;
+    }
+
     if (!s_hookCls) {
         jmethodID getClassLoader = env->GetMethodID(env->FindClass("java/lang/Class"), "getClassLoader", "()Ljava/lang/ClassLoader;");
         jclass channelCls = env->GetObjectClass(channel);
@@ -508,6 +551,8 @@ void PacketHook::update() {
                     
                     if (existing) {
                         s_injected = true;
+                        if (!s_hookedChannel)
+                            s_hookedChannel = env->NewGlobalRef(channel);
                         env->DeleteLocalRef(existing);
                     } else {
                         env->CallObjectMethod(pipeline, addBefore, baseName, hookName, s_hookObj);
@@ -522,6 +567,9 @@ void PacketHook::update() {
                         } else {
                             Logger::info("[PacketHook] Successfully injected PacketFilterHook into Netty pipeline!");
                             s_injected = true;
+                            if (s_hookedChannel)
+                                env->DeleteGlobalRef(s_hookedChannel);
+                            s_hookedChannel = env->NewGlobalRef(channel);
                             s_addFailureLogged = false;
                             s_nextAttempt = 0;
                         }
@@ -540,6 +588,7 @@ void PacketHook::update() {
     }
 
     env->DeleteLocalRef(channel);
+    env->DeleteLocalRef(nhCls);
     env->DeleteLocalRef(networkManager);
     env->DeleteLocalRef(nh);
     env->DeleteLocalRef(mcObj);
@@ -569,6 +618,10 @@ void PacketHook::uninstall() {
         if (s_hookCls) {
             env->DeleteGlobalRef(s_hookCls);
             s_hookCls = nullptr;
+        }
+        if (s_hookedChannel) {
+            env->DeleteGlobalRef(s_hookedChannel);
+            s_hookedChannel = nullptr;
         }
         s_injected = false;
     };
