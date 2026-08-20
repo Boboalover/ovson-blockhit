@@ -9,7 +9,7 @@ Two features: **client-side block-hit sound** and **Bedwars Tools**.
 (§2–§6), 10 are the loader (§7), and the rest are docs and `.gitignore`.
 
 Verified before writing this: all three deterministic test suites pass
-(**68 + 56 + 66 = 190 checks**), the x64 DLL links clean, and every JNI change
+(**72 + 56 + 66 = 194 checks**), the x64 DLL links clean, and every JNI change
 was re-checked against a deobfuscated client. Details in
 [Verification](#verification).
 
@@ -206,13 +206,13 @@ New: `Logic/Bedwars/{BedwarsCore,BedwarsRuntime,BedwarsConfig,BedwarsMaps}.*`,
 `Render/BedwarsOverlay.*`, `ClickGUI/Tabs/Bedwars.cpp`.
 
 `BedwarsCore` is deliberately **free of JNI and Windows**: pure logic, which is
-what makes the 68-check suite possible. `BedwarsRuntime` is the JNI/rendering
+what makes the 72-check suite possible. `BedwarsRuntime` is the JNI/rendering
 half.
 
 Features: event timers, height limit, resource tracking, team/upgrade state,
 and player alerts (armour tier, sword tier, Sharpness/Protection, potions,
 knockback stick, TNT, fireball, ender pearl, golden apple, magic milk, bridge
-egg, water bucket, dream defender).
+egg, water bucket, dream defender, gold/diamond pickaxe, obsidian).
 
 Design points a reviewer might want:
 
@@ -228,17 +228,33 @@ Design points a reviewer might want:
   `forgetPlayerLoadout` clears held item, sword tier and item flags, and
   preserves both `armor` and its alert memory — otherwise the same armour line
   fires after every kill.
-- **Potion metadata is masked with `& 0x0F`.** The raw value carries level II
-  (`0x20`) and extended (`0x40`) bits, so an unmasked compare missed every
-  Speed II.
+- **Potions are classified by name *and* damage value.** The raw damage
+  carries level II (`0x20`) and extended (`0x40`) bits, so it is masked with
+  `& 0x0F`; an unmasked compare missed every Speed II. The name matters too:
+  1.8's `ItemPotion` overrides `getUnlocalizedName(ItemStack)` to return an
+  already-translated string and Hypixel renames the stacks anyway, so a damage
+  value we failed to read used to lose a potion that says Speed on it.
 - **Enemy Protection** is inferred from the armour's enchantment glint
   (`ItemStack.hasEffect()`), since the enchantment list is not readable from the
-  client for other players.
+  client for other players — but **only from the chestplate and leggings**.
+  The kit helmet glints from spawn and the Feather Falling upgrade enchants
+  nothing but the boots, so counting all four slots made every player on the
+  map read as having bought Protection. Protection applies to the whole set,
+  so the two remaining slots still catch it.
 - **Any sword tier above Wood alerts.** Stone is the first thing most players
   buy; treating it as uninteresting was the most-reported gap.
+- **Alert colours are chosen from Minecraft's sixteen chat colours.** The item
+  is its own `MessageSegment` and carries its own colour, so the overlay and
+  the chat line render identically; a colour outside that palette would look
+  right on the overlay and white in chat. A test fails if one is ever added.
+  Items with no colour that obviously reads as "that item" stay body-coloured
+  rather than wearing a meaningless one.
+- **Every item has its own on/off switch**, persisted as `itemAlert_<key>` and
+  grouped in a collapsible Item Alerts section. An absent key means enabled, so
+  neither an older config nor a later-added item is ever silently muted.
 
 ### Settings cleanup
-`formatVersion` 4. Fifteen settings that nobody moved off their defaults are now
+`formatVersion` 5. Fifteen settings that nobody moved off their defaults are now
 constants in `Configuration::Fixed`. Old keys still parse and are ignored; a
 malformed or unknown key costs only its own field.
 
@@ -304,7 +320,7 @@ closed while an injection is in flight.
 
 | Suite | Result |
 |---|---|
-| `OVson.Bedwars` | 68/68 |
+| `OVson.Bedwars` | 72/72 |
 | `OVson.BlockHitHeuristic` | 56/56 |
 | `OVson.BlockHitAudio` | 66/66 |
 

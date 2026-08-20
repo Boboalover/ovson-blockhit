@@ -27,7 +27,7 @@ inline constexpr int kMaximumVisibleNotifications = 5;
 
 struct Settings {
   Settings();
-  int formatVersion = 4;
+  int formatVersion = 5;
   bool masterEnabled = false;
   std::array<bool, kModuleCount> modules{};
   bool debug = false;
@@ -41,6 +41,10 @@ struct Settings {
   const HudLayout &hudLayout(HudId id) const;
   bool resourceHudVisible() const;
   std::array<bool, kResourceCount> resources = {true, true, true, true};
+  // Which items are worth an alert. Defaults to all of them; an item added
+  // in a later version is enabled for existing configs too, because the
+  // reader only ever looks for keys that turn one off.
+  std::array<bool, kImportantItemCount> itemAlerts = allItemAlertsEnabled();
   bool shopDuplicatePrevention = false;
   int heightLimitOverride = 0;
   float playerAlertRange = 32.0F;
@@ -71,6 +75,8 @@ bool isResourceHudEnabled();
 void setResourceHudEnabled(bool enabled);
 bool isResourceEnabled(Resource resource);
 void setResourceEnabled(Resource resource, bool enabled);
+bool isItemAlertEnabled(ImportantItem item);
+void setItemAlertEnabled(ImportantItem item, bool enabled);
 float getTimerX();
 void setTimerX(float value);
 float getTimerY();

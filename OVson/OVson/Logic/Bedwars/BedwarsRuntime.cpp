@@ -219,6 +219,17 @@ ArmorTier armorTierFor(JNIEnv *env, jobject player, bool *enchantedOut) {
                             ? lc->GetMethodID(stackClass, "hasEffect", "()Z",
                                               "func_77962_s", "s")
                             : nullptr;
+  // Slot order in 1.8 is 0 boots, 1 leggings, 2 chestplate, 3 helmet.
+  //
+  // Only the middle two are evidence of the Protection upgrade. The kit
+  // helmet already glints the moment you spawn, and the Feather Falling
+  // shop upgrade enchants nothing but the boots -- so counting either of
+  // those made every player on the map look like they had bought
+  // Protection, which is worse than not reporting it at all. Protection is
+  // applied to the whole set, so chestplate and leggings still catch it.
+  constexpr int kLeggingsSlot = 1;
+  constexpr int kChestplateSlot = 2;
+
   ArmorTier best = ArmorTier::None;
   for (int slot = 0; slot < 4; ++slot) {
     jobject stack = env->CallObjectMethod(player, getArmor, slot);
@@ -229,6 +240,7 @@ ArmorTier armorTierFor(JNIEnv *env, jobject player, bool *enchantedOut) {
     if (!stack)
       continue;
     if (enchantedOut && hasEffect &&
+        (slot == kLeggingsSlot || slot == kChestplateSlot) &&
         env->CallBooleanMethod(stack, hasEffect) == JNI_TRUE) {
       *enchantedOut = true;
     }
@@ -898,6 +910,7 @@ void Runtime::tick() {
     options.cooldownMs =
         static_cast<Tick>(Configuration::Fixed::kPlayerAlertCooldownMs);
     options.visibility = settings.visibilityMode;
+    options.itemEnabled = settings.itemAlerts;
     const auto scanned = scanPlayers(env, world, player, m_playerX, m_playerY,
                                      m_playerZ, settings.visibilityMode,
                                      Configuration::Fixed::kCameraViewDegrees);
@@ -1089,16 +1102,11 @@ void Runtime::rebuildSnapshot(Tick now, double playerY) {
 namespace {
 
 // Maps an overlay segment colour back to the Minecraft formatting code that
-// renders the same colour in chat. Derived from the team palette rather than
-// hardcoded, so the two surfaces cannot drift apart if the palette changes.
-// Anything not in the palette is body text and renders white.
+// renders the same colour in chat. Alert colours are all chosen from
+// Minecraft's own sixteen-colour palette precisely so this mapping is exact
+// and the two surfaces cannot drift apart; anything outside it is body text.
 const char *argbToFormattingCode(std::uint32_t argb) {
-  for (std::size_t i = 0; i < kTeamCount; ++i) {
-    const TeamId team = static_cast<TeamId>(i);
-    if (teamArgb(team) == argb)
-      return teamFormattingCode(team);
-  }
-  return "f";
+  return formattingCodeForArgb(argb);
 }
 
 // Renders an alert as a single chat line: an [OVSON] tag, then the alert

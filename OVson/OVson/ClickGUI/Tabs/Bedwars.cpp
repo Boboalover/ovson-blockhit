@@ -37,7 +37,8 @@ void renderBedwars(TabCtx &ctx) {
   const auto runtime = Runtime::instance().snapshot();
   const bool master = settings.masterEnabled;
 
-  static std::array<bool, 5> expanded = {true, true, false, false, false};
+  static std::array<bool, 6> expanded = {true,  true,  false,
+                                         false, false, false};
   static ULONGLONG resetArmedAt = 0;
 
   // ---- Group ---------------------------------------------------------------
@@ -248,6 +249,26 @@ void renderBedwars(TabCtx &ctx) {
                 settings.resources[i], 620 + static_cast<int>(i), true, true,
                 [resource](bool enabled) {
                   BwConfig::setResourceEnabled(resource, enabled);
+                });
+    }
+  }
+  groupEnd();
+
+  // ---- Item Alerts ---------------------------------------------------------
+  // One switch per item rather than one blanket toggle: which items are worth
+  // interrupting you for is a matter of how you play, and the only person who
+  // can answer that is the person reading the alerts. Item Alerts in the
+  // Modules group above is still the master -- these only narrow it.
+  if (group(5, "Item Alerts", "Which items are worth telling you about")) {
+    for (std::size_t i = 1; i < kImportantItemCount; ++i) {
+      const ImportantItem item = static_cast<ImportantItem>(i);
+      const char *name = importantItemName(item);
+      if (!name || !*name)
+        continue;
+      toggleRow(name, "Alert when an enemy has this", settings.itemAlerts[i],
+                700 + static_cast<int>(i), true, true,
+                [item](bool enabled) {
+                  BwConfig::setItemAlertEnabled(item, enabled);
                 });
     }
   }

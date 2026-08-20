@@ -336,8 +336,23 @@ enum class ImportantItem : std::size_t {
   BridgeEgg,
   WaterBucket,
   DreamDefender,
+  GoldenPickaxe,
+  DiamondPickaxe,
+  Obsidian,
   Count
 };
+
+inline constexpr std::size_t kImportantItemCount =
+    static_cast<std::size_t>(ImportantItem::Count);
+
+// Every item starts alertable; the per-item switches only ever turn things
+// off, so a newly added item is never silently disabled by an old config.
+constexpr std::array<bool, kImportantItemCount> allItemAlertsEnabled() {
+  std::array<bool, kImportantItemCount> flags{};
+  for (std::size_t i = 0; i < flags.size(); ++i)
+    flags[i] = true;
+  return flags;
+}
 
 // How long a player has to go without being seen holding an item before the
 // same item counts as news again. Without this the per-match dedup is
@@ -388,6 +403,20 @@ PotionKind classifyPotion(const VisibleItem &item);
 SwordTier classifySwordTier(const VisibleItem &item);
 ImportantItem classifyImportantItem(const VisibleItem &item);
 const char *importantItemName(ImportantItem item);
+// Stable identifier used as the config key for this item's on/off switch.
+// Never reuse or rename one of these: an old config would silently apply a
+// stored preference to the wrong item.
+const char *importantItemKey(ImportantItem item);
+// The colour this item is drawn in. Returns kUncolouredArgb for items where
+// no colour reads as obviously "that item", which renders as normal body
+// text rather than a wrong-looking guess.
+std::uint32_t importantItemArgb(ImportantItem item);
+std::uint32_t armorTierArgb(ArmorTier tier);
+// Minecraft's sixteen chat colours are the only ones that survive the trip
+// to chat, so alert colours are chosen from that palette and this maps one
+// back to its formatting code. Anything outside the palette is body text.
+const char *formattingCodeForArgb(std::uint32_t argb);
+inline constexpr std::uint32_t kUncolouredArgb = 0xFFE0E0E0U;
 bool isExplicitlyIgnoredHeldItem(const VisibleItem &item);
 
 struct PlayerObservation {
@@ -428,10 +457,18 @@ struct PlayerAlertOptions {
   bool upgrades = false;
   bool consumes = false;
   bool items = false;
+  // Per-item switches. `items` is still the master: turning it off silences
+  // every item regardless of what is set here.
+  std::array<bool, kImportantItemCount> itemEnabled = allItemAlertsEnabled();
   double maximumDistance = 32.0;
   Tick cooldownMs = 2500;
   std::size_t capacity = 128;
   VisibilityMode visibility = VisibilityMode::LineOfSight;
+
+  bool itemAllowed(ImportantItem item) const {
+    const auto index = static_cast<std::size_t>(item);
+    return index < itemEnabled.size() ? itemEnabled[index] : true;
+  }
 };
 
 struct PlayerMonitorDiagnostics {

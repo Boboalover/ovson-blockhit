@@ -65,7 +65,19 @@ std::string playerText(const PlayerObservation &player,
 
 std::vector<MessageSegment> playerSegments(const PlayerObservation &player,
                                            const std::string &tail) {
-  return {{player.identity, teamArgb(player.team)}, {tail, 0xFFE0E0E0U}};
+  return {{player.identity, teamArgb(player.team)}, {tail, kUncolouredArgb}};
+}
+
+// Same shape, but the thing the alert is about gets its own colour so the
+// item is readable at a glance instead of being one more white word in a
+// white sentence.
+std::vector<MessageSegment> playerItemSegments(const PlayerObservation &player,
+                                               const std::string &prefix,
+                                               const std::string &label,
+                                               std::uint32_t labelArgb) {
+  return {{player.identity, teamArgb(player.team)},
+          {prefix, kUncolouredArgb},
+          {label, labelArgb}};
 }
 
 } // namespace
@@ -718,6 +730,88 @@ const char *armorTierName(ArmorTier armor) {
   return names[index < names.size() ? index : 0];
 }
 
+namespace {
+
+// Minecraft's sixteen chat colours. Alert colours are chosen from this table
+// and nowhere else: the overlay can draw any ARGB it likes, but chat can only
+// express these, so picking a colour outside the table would make the same
+// alert look different on the two surfaces.
+struct PaletteEntry {
+  std::uint32_t argb;
+  const char *code;
+};
+
+constexpr std::array<PaletteEntry, 16> kPalette = {{
+    {0xFF000000U, "0"}, {0xFF0000AAU, "1"}, {0xFF00AA00U, "2"},
+    {0xFF00AAAAU, "3"}, {0xFFAA0000U, "4"}, {0xFFAA00AAU, "5"},
+    {0xFFFFAA00U, "6"}, {0xFFAAAAAAU, "7"}, {0xFF555555U, "8"},
+    {0xFF5555FFU, "9"}, {0xFF55FF55U, "a"}, {0xFF55FFFFU, "b"},
+    {0xFFFF5555U, "c"}, {0xFFFF55FFU, "d"}, {0xFFFFFF55U, "e"},
+    {0xFFFFFFFFU, "f"},
+}};
+
+constexpr std::uint32_t kDarkAqua = 0xFF00AAAAU;
+constexpr std::uint32_t kDarkPurple = 0xFFAA00AAU;
+constexpr std::uint32_t kGold = 0xFFFFAA00U;
+constexpr std::uint32_t kGray = 0xFFAAAAAAU;
+constexpr std::uint32_t kDarkGray = 0xFF555555U;
+constexpr std::uint32_t kBlue = 0xFF5555FFU;
+constexpr std::uint32_t kGreen = 0xFF55FF55U;
+constexpr std::uint32_t kAqua = 0xFF55FFFFU;
+constexpr std::uint32_t kRed = 0xFFFF5555U;
+constexpr std::uint32_t kLightPurple = 0xFFFF55FFU;
+constexpr std::uint32_t kYellow = 0xFFFFFF55U;
+constexpr std::uint32_t kWhite = 0xFFFFFFFFU;
+
+} // namespace
+
+const char *formattingCodeForArgb(std::uint32_t argb) {
+  for (const auto &entry : kPalette) {
+    if (entry.argb == argb)
+      return entry.code;
+  }
+  return "f";
+}
+
+std::uint32_t armorTierArgb(ArmorTier tier) {
+  switch (tier) {
+  case ArmorTier::Diamond: return kAqua;
+  case ArmorTier::Iron: return kWhite;
+  case ArmorTier::Chain: return kGray;
+  case ArmorTier::Leather: return kGold;
+  default: return kUncolouredArgb;
+  }
+}
+
+std::uint32_t importantItemArgb(ImportantItem item) {
+  switch (item) {
+  // Material colours, so the alert reads at a glance the way the item does
+  // in an inventory.
+  case ImportantItem::DiamondSword:
+  case ImportantItem::DiamondPickaxe: return kAqua;
+  case ImportantItem::IronSword: return kWhite;
+  case ImportantItem::StoneSword: return kGray;
+  case ImportantItem::GoldenPickaxe:
+  case ImportantItem::GoldenApple: return kYellow;
+  case ImportantItem::EnchantedBow: return kLightPurple;
+  case ImportantItem::Bow: return kGold;
+  case ImportantItem::KnockbackStick: return kGold;
+  case ImportantItem::Tnt: return kRed;
+  case ImportantItem::Fireball: return kGold;
+  case ImportantItem::EnderPearl: return kDarkAqua;
+  case ImportantItem::Obsidian: return kDarkPurple;
+  case ImportantItem::WaterBucket: return kBlue;
+  case ImportantItem::Milk: return kWhite;
+  case ImportantItem::SpeedPotion: return kAqua;
+  case ImportantItem::JumpPotion: return kGreen;
+  case ImportantItem::InvisibilityPotion: return kDarkGray;
+  case ImportantItem::DreamDefender: return kGreen;
+  // A Bridge Egg is an ordinary egg and reads as nothing in particular, so
+  // it stays body-coloured rather than wearing a colour that means nothing.
+  default: return kUncolouredArgb;
+  }
+}
+
 const char *potionName(PotionKind potion) {
   switch (potion) {
   case PotionKind::Speed: return "Speed";
@@ -786,8 +880,32 @@ bool isKnockbackStick(const VisibleItem &item) {
 
 PotionKind classifyPotion(const VisibleItem &item) {
   const std::string type = normalizeText(item.typeName);
-  if (type.find("potion") == std::string::npos)
+  const std::string display = normalizeText(item.displayName);
+  // 1.8's ItemPotion overrides getUnlocalizedName(ItemStack) to return an
+  // already-translated string, so the type can arrive as anything from
+  // "potion" to "potion of swiftness" depending on the client's language
+  // files -- and a renamed stack only shows up in the display name. Accept
+  // the word from either side rather than betting on one of them.
+  const bool looksLikePotion = type.find("potion") != std::string::npos ||
+                               display.find("potion") != std::string::npos;
+  if (!looksLikePotion)
     return PotionKind::Unknown;
+
+  // Name first, when the name actually says which potion it is. Hypixel
+  // labels its potions plainly ("Speed II Potion"), and a name that says
+  // Speed is better evidence than a damage value we may have failed to read.
+  auto mentions = [](const std::string &text, const char *needle) {
+    return text.find(needle) != std::string::npos;
+  };
+  for (const std::string &text : {display, type}) {
+    if (mentions(text, "invisib"))
+      return PotionKind::Invisibility;
+    if (mentions(text, "jump") || mentions(text, "leaping"))
+      return PotionKind::Jump;
+    if (mentions(text, "speed") || mentions(text, "swift"))
+      return PotionKind::Speed;
+  }
+
   if (item.metadata < 0)
     return PotionKind::Unknown;
   // Only the low four bits carry the potion type. Bit 5 is the level-II flag
@@ -852,6 +970,20 @@ ImportantItem classifyImportantItem(const VisibleItem &item) {
   if (type == "bucketwater" || type == "water bucket" ||
       type == "item bucketwater")
     return ImportantItem::WaterBucket;
+  // Only the two upper pickaxe tiers matter. Everyone can end up with a
+  // wooden or stone pickaxe from the default shop, but gold (tier 3) and
+  // diamond (tier 4) are deliberate purchases and tell you the holder is
+  // equipped to mine through a defence.
+  if (type == "pickaxegold" || type == "golden pickaxe" ||
+      type == "gold pickaxe" || type == "item pickaxegold")
+    return ImportantItem::GoldenPickaxe;
+  if (type == "pickaxediamond" || type == "diamond pickaxe" ||
+      type == "item pickaxediamond")
+    return ImportantItem::DiamondPickaxe;
+  // Obsidian is the strongest block in the mode, so someone carrying it is
+  // about to make a bed a great deal harder to reach.
+  if (type == "obsidian" || type == "tile obsidian")
+    return ImportantItem::Obsidian;
   if (type == "tnt" || type == "tile tnt") return ImportantItem::Tnt;
   if (type == "fireball" || type == "fire charge" ||
       type == "item fireball")
@@ -889,6 +1021,35 @@ const char *importantItemName(ImportantItem item) {
   case ImportantItem::BridgeEgg: return "Bridge Egg";
   case ImportantItem::WaterBucket: return "Water Bucket";
   case ImportantItem::DreamDefender: return "Dream Defender";
+  case ImportantItem::GoldenPickaxe: return "Golden Pickaxe";
+  case ImportantItem::DiamondPickaxe: return "Diamond Pickaxe";
+  case ImportantItem::Obsidian: return "Obsidian";
+  default: return "";
+  }
+}
+
+const char *importantItemKey(ImportantItem item) {
+  switch (item) {
+  case ImportantItem::StoneSword: return "stoneSword";
+  case ImportantItem::IronSword: return "ironSword";
+  case ImportantItem::DiamondSword: return "diamondSword";
+  case ImportantItem::Bow: return "bow";
+  case ImportantItem::EnchantedBow: return "enchantedBow";
+  case ImportantItem::KnockbackStick: return "knockbackStick";
+  case ImportantItem::SpeedPotion: return "speedPotion";
+  case ImportantItem::JumpPotion: return "jumpPotion";
+  case ImportantItem::InvisibilityPotion: return "invisibilityPotion";
+  case ImportantItem::Tnt: return "tnt";
+  case ImportantItem::Fireball: return "fireball";
+  case ImportantItem::EnderPearl: return "enderPearl";
+  case ImportantItem::GoldenApple: return "goldenApple";
+  case ImportantItem::Milk: return "magicMilk";
+  case ImportantItem::BridgeEgg: return "bridgeEgg";
+  case ImportantItem::WaterBucket: return "waterBucket";
+  case ImportantItem::DreamDefender: return "dreamDefender";
+  case ImportantItem::GoldenPickaxe: return "goldenPickaxe";
+  case ImportantItem::DiamondPickaxe: return "diamondPickaxe";
+  case ImportantItem::Obsidian: return "obsidian";
   default: return "";
   }
 }
@@ -1032,11 +1193,13 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
     }
 
     if (options.armor && armorRank(player.armor) > armorRank(tracked.armor)) {
-      const std::string tail = std::string(" now has ") +
-                               armorTierName(player.armor) + " Armor";
+      const std::string label =
+          std::string(armorTierName(player.armor)) + " Armor";
+      const std::string tail = " now has " + label;
       emit(tracked, PlayerAlert::Kind::Armor, armorTierName(player.armor),
            player.entityId, player.team, playerText(player, tail),
-           playerSegments(player, tail));
+           playerItemSegments(player, " now has ", label,
+                              armorTierArgb(player.armor)));
     }
     if (options.upgrades && player.heldItem.enchanted &&
         isSword(player.heldItem)) {
@@ -1118,39 +1281,48 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
 
     const bool consumeStarted =
         options.consumes && player.usingItem && !tracked.usingItem &&
-        isConsumable(consumableName);
+        isConsumable(consumableName) && options.itemAllowed(importantItem);
     if (consumeStarted && !consumableName.empty()) {
       const std::string tail = " is using " + consumableName;
       emit(tracked, PlayerAlert::Kind::Consume, consumableName, player.entityId,
-           player.team, playerText(player, tail), playerSegments(player, tail));
+           player.team, playerText(player, tail),
+           playerItemSegments(player, " is using ", consumableName,
+                              importantItemArgb(importantItem)));
       // When both modules are enabled, the stronger use signal replaces the
       // same-tick held-item alert and prevents a delayed duplicate.
       markItemReported(importantIndex);
     }
-    if (options.items && !consumeStarted && potion != PotionKind::Unknown) {
+    if (options.items && !consumeStarted && potion != PotionKind::Unknown &&
+        options.itemAllowed(importantItem)) {
       ++m_diagnostics.classifiedPotions;
       if (itemIsNews(importantIndex)) {
         markItemReported(importantIndex);
-        const std::string tail =
-            std::string(potion == PotionKind::Invisibility
-                            ? " is holding an "
-                            : " is holding a ") +
-            potionName(potion) + " Potion";
+        const std::string prefix = potion == PotionKind::Invisibility
+                                       ? " is holding an "
+                                       : " is holding a ";
+        const std::string label = std::string(potionName(potion)) + " Potion";
+        const std::string tail = prefix + label;
         emit(tracked, PlayerAlert::Kind::Potion, potionName(potion),
              player.entityId, player.team, playerText(player, tail),
-             playerSegments(player, tail), false);
+             playerItemSegments(player, prefix, label,
+                                importantItemArgb(importantItem)),
+             false);
       } else {
         ++m_diagnostics.potionDuplicates;
       }
     }
-    if (options.items && isKnockbackStick(player.heldItem)) {
+    if (options.items && isKnockbackStick(player.heldItem) &&
+        options.itemAllowed(ImportantItem::KnockbackStick)) {
       ++m_diagnostics.classifiedKnockback;
       if (itemIsNews(importantIndex)) {
         markItemReported(importantIndex);
         const std::string tail = " has a Knockback Stick";
         emit(tracked, PlayerAlert::Kind::KnockbackStick, "knockback stick",
              player.entityId, player.team, playerText(player, tail),
-             playerSegments(player, tail), false);
+             playerItemSegments(
+                 player, " has a ", "Knockback Stick",
+                 importantItemArgb(ImportantItem::KnockbackStick)),
+             false);
       } else {
         ++m_diagnostics.knockbackDuplicates;
       }
@@ -1164,25 +1336,30 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
     // real change in what that player can do to you, and leaving it out was
     // why buying a stone sword produced no alert at all.
     if (options.items && swordUpgraded && swordTier != SwordTier::None &&
-        swordTier != SwordTier::Wood) {
-      const std::string tail =
-          std::string(" upgraded to ") + importantItemName(importantItem);
+        swordTier != SwordTier::Wood && options.itemAllowed(importantItem)) {
+      const std::string label = importantItemName(importantItem);
+      const std::string tail = " upgraded to " + label;
       emit(tracked, PlayerAlert::Kind::Item, importantItemName(importantItem),
            player.entityId, player.team, playerText(player, tail),
-           playerSegments(player, tail), false);
+           playerItemSegments(player, " upgraded to ", label,
+                              importantItemArgb(importantItem)),
+           false);
       markItemReported(importantIndex);
     } else if (options.items && !consumeStarted &&
+               options.itemAllowed(importantItem) &&
                importantItem != ImportantItem::None &&
                potion == PotionKind::Unknown &&
                !isKnockbackStick(player.heldItem) &&
                swordTier == SwordTier::None) {
       if (itemIsNews(importantIndex)) {
         markItemReported(importantIndex);
-        const std::string tail =
-            std::string(" is holding ") + importantItemName(importantItem);
+        const std::string label = importantItemName(importantItem);
+        const std::string tail = " is holding " + label;
         emit(tracked, PlayerAlert::Kind::Item, importantItemName(importantItem),
              player.entityId, player.team, playerText(player, tail),
-             playerSegments(player, tail), false);
+             playerItemSegments(player, " is holding ", label,
+                                importantItemArgb(importantItem)),
+             false);
       } else {
         ++m_diagnostics.itemDuplicates;
       }

@@ -183,6 +183,18 @@ void setResourceHudEnabled(bool enabled) {
     settings.hud[static_cast<std::size_t>(HudId::Resource)].visible = enabled;
   });
 }
+bool isItemAlertEnabled(ImportantItem item) {
+  const auto settings = get();
+  const auto index = static_cast<std::size_t>(item);
+  return index >= settings.itemAlerts.size() || settings.itemAlerts[index];
+}
+void setItemAlertEnabled(ImportantItem item, bool enabled) {
+  mutate([&](Settings &settings) {
+    const auto index = static_cast<std::size_t>(item);
+    if (index < settings.itemAlerts.size())
+      settings.itemAlerts[index] = enabled;
+  });
+}
 bool isResourceEnabled(Resource resource) {
   const auto settings = get();
   const auto index = static_cast<std::size_t>(resource);
@@ -315,7 +327,7 @@ void resetAllHudLayouts() {
 std::string serialize(const Settings &settings) {
   std::ostringstream out;
   out << std::fixed << std::setprecision(3);
-  out << "version=4;master=" << settings.masterEnabled << ';';
+  out << "version=5;master=" << settings.masterEnabled << ';';
   for (std::size_t i = 0; i < kModuleCount; ++i)
     out << moduleKey(static_cast<Module>(i)) << '=' << settings.modules[i] << ';';
   out << "debug=" << settings.debug << ";sounds=" << settings.sounds
@@ -338,6 +350,11 @@ std::string serialize(const Settings &settings) {
       << ";visibilityMode=" << static_cast<int>(settings.visibilityMode)
       << ";alertOutput=" << static_cast<int>(settings.alertOutput)
       << ';';
+  for (std::size_t i = 1; i < kImportantItemCount; ++i) {
+    const char *key = importantItemKey(static_cast<ImportantItem>(i));
+    if (key && *key)
+      out << "itemAlert_" << key << '=' << settings.itemAlerts[i] << ';';
+  }
   for (std::size_t i = 0; i < kHudCount; ++i) {
     const auto &hud = settings.hud[i];
     out << "hud" << i << "Visible=" << hud.visible << ";hud" << i
@@ -352,8 +369,8 @@ Settings deserialize(const std::string &data) {
   const auto pairs = parsePairs(data);
   // An empty file is a fresh v4 configuration.  Only persisted legacy data
   // without a version marker should receive the v1 compatibility defaults.
-  const int version = data.empty() ? 4 : readInt(pairs, "version", 1, 1, 4);
-  settings.formatVersion = 4;
+  const int version = data.empty() ? 5 : readInt(pairs, "version", 1, 1, 5);
+  settings.formatVersion = 5;
   settings.masterEnabled = readBool(pairs, "master", false);
   for (std::size_t i = 0; i < kModuleCount; ++i)
     settings.modules[i] =
@@ -370,6 +387,15 @@ Settings deserialize(const std::string &data) {
   settings.resources[3] = readBool(pairs, "resourceEmerald", true);
   settings.shopDuplicatePrevention =
       readBool(pairs, "shopDuplicatePrevention", false);
+  // Absent key means enabled, so a config written before an item existed
+  // does not silently mute it.
+  for (std::size_t i = 1; i < kImportantItemCount; ++i) {
+    const char *key = importantItemKey(static_cast<ImportantItem>(i));
+    if (!key || !*key)
+      continue;
+    settings.itemAlerts[i] =
+        readBool(pairs, (std::string("itemAlert_") + key).c_str(), true);
+  }
   // v1 kept the timer/height placement in their own top-level keys. From v2
   // on the hud[] block below is the only place they live, so these are read
   // into locals purely to migrate an old file.

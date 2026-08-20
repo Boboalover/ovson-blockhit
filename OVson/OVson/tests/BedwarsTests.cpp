@@ -493,7 +493,7 @@ void configRoundTripPreservesNamedSettings() {
           "item alert key is not named");
 
   const auto decoded = Configuration::deserialize(encoded);
-  require(decoded.formatVersion == 4,
+  require(decoded.formatVersion == 5,
           "serialized configuration did not carry the current format version");
   require(decoded.masterEnabled &&
               decoded.modules[static_cast<std::size_t>(Module::EventTimers)] &&
@@ -740,9 +740,25 @@ void knockbackStickClassificationAndDeduplication() {
 }
 
 void potionClassificationDedupAndTransition() {
+  // The name is evidence now. 1.8's ItemPotion returns an already-translated
+  // unlocalized name and Hypixel renames the stacks anyway, so refusing to
+  // read the name meant an unreadable damage value silently lost the alert.
   require(classifyPotion({"potion", "Potion of Speed", -1, false}) ==
+              PotionKind::Speed,
+          "a potion that says Speed on it did not classify as Speed");
+  require(classifyPotion({"Potion of Swiftness", "", -1, false}) ==
+              PotionKind::Speed,
+          "the translated 1.8 potion type name did not classify");
+  // Hypixel's Speed II carries the level-II bit; only the low nibble is the
+  // type, and every duration/level variant has to land on Speed.
+  for (const int damage : {8194, 8226, 8258}) {
+    require(classifyPotion({"potion", "Potion", damage, false}) ==
+                PotionKind::Speed,
+            "a Speed potion damage variant did not classify");
+  }
+  require(classifyPotion({"swordIron", "Speed Sword", 0, false}) ==
               PotionKind::Unknown,
-          "display name alone classified a potion");
+          "a non-potion whose name mentions speed classified as a potion");
   require(classifyPotion({"potion", "Jump V Potion", 11, false}) ==
               PotionKind::Jump,
           "Jump metadata did not classify");
@@ -1129,6 +1145,131 @@ void deathVictimParsesKnownPhrasesAndRejectsProse() {
   require(!parseDeathVictim(""), "empty message produced a victim");
 }
 
+// Gold and diamond pickaxes are deliberate purchases and obsidian is the
+// block that decides whether a bed is still reachable; the two lower pickaxe
+// tiers are noise everybody ends up holding.
+void pickaxeTiersAndObsidianClassify() {
+  require(classifyImportantItem({"pickaxeGold", "Golden Pickaxe", 0, false}) ==
+              ImportantItem::GoldenPickaxe,
+          "tier 3 golden pickaxe did not classify");
+  require(classifyImportantItem(
+              {"pickaxeDiamond", "Diamond Pickaxe", 0, true}) ==
+              ImportantItem::DiamondPickaxe,
+          "tier 4 diamond pickaxe did not classify");
+  require(classifyImportantItem({"obsidian", "Obsidian", 0, false}) ==
+              ImportantItem::Obsidian,
+          "obsidian did not classify");
+  require(classifyImportantItem({"pickaxeWood", "Wooden Pickaxe", 0, false}) ==
+                  ImportantItem::None &&
+              classifyImportantItem({"pickaxeStone", "Stone Pickaxe", 0,
+                                     false}) == ImportantItem::None,
+          "a starter pickaxe tier became alertable");
+
+  // Every alertable item needs a name for the message and a key for its
+  // config switch, and no two items may share a key or an old config would
+  // apply one item's preference to another.
+  std::vector<std::string> keys;
+  for (std::size_t i = 1; i < kImportantItemCount; ++i) {
+    const ImportantItem item = static_cast<ImportantItem>(i);
+    const std::string name = importantItemName(item);
+    const std::string key = importantItemKey(item);
+    require(!name.empty(), "an alertable item has no display name");
+    require(!key.empty(), "an alertable item has no config key");
+    require(std::find(keys.begin(), keys.end(), key) == keys.end(),
+            "two items share a config key");
+    keys.push_back(key);
+  }
+}
+
+// Alert colours have to survive the trip to chat, and chat can only express
+// Minecraft's sixteen colours. A colour outside that palette would silently
+// render as white in chat while staying correct on the overlay, so the two
+// surfaces would disagree about the same alert.
+void alertColoursStayInsideTheChatPalette() {
+  auto inPalette = [](std::uint32_t argb) {
+    // Body text is deliberately outside the palette and maps to white.
+    if (argb == kUncolouredArgb)
+      return true;
+    const std::string code = formattingCodeForArgb(argb);
+    return code != "f" || argb == 0xFFFFFFFFU;
+  };
+  for (std::size_t i = 1; i < kImportantItemCount; ++i) {
+    require(inPalette(importantItemArgb(static_cast<ImportantItem>(i))),
+            "an item colour cannot be expressed in chat");
+  }
+  for (const ArmorTier tier : {ArmorTier::Leather, ArmorTier::Chain,
+                               ArmorTier::Iron, ArmorTier::Diamond}) {
+    require(inPalette(armorTierArgb(tier)),
+            "an armor colour cannot be expressed in chat");
+  }
+  require(std::string(formattingCodeForArgb(teamArgb(TeamId::Red))) == "c",
+          "team colours no longer map to their own formatting code");
+
+  // The item itself must carry its colour, not just sit in the white tail.
+  PlayerMonitor monitor;
+  auto options = rangeItemOptions();
+  auto player = enemy(1, "Steve");
+  player.heldItem = {"appleGold", "Golden Apple", 0, false};
+  const auto alerts = monitor.observe({player}, options, 1000);
+  require(alerts.size() == 1, "golden apple did not alert");
+  const auto &segments = alerts[0].segments;
+  const auto coloured = std::find_if(
+      segments.begin(), segments.end(), [](const MessageSegment &segment) {
+        return segment.text == "Golden Apple";
+      });
+  require(coloured != segments.end(), "the item name is not its own segment");
+  require(coloured->argb == importantItemArgb(ImportantItem::GoldenApple),
+          "the item segment did not carry the item colour");
+}
+
+// Turning one item off must silence exactly that item and nothing else.
+void perItemTogglesSilenceOnlyTheirOwnItem() {
+  PlayerMonitor monitor;
+  auto options = rangeItemOptions();
+  options.cooldownMs = 60000;
+  options
+      .itemEnabled[static_cast<std::size_t>(ImportantItem::GoldenApple)] =
+      false;
+
+  auto player = enemy(1, "Steve");
+  player.heldItem = {"appleGold", "Golden Apple", 0, false};
+  require(monitor.observe({player}, options, 1000).empty(),
+          "a disabled item still alerted");
+
+  player.heldItem = {"swordDiamond", "Diamond Sword", 0, false};
+  require(monitor.observe({player}, options, 1100).size() == 1,
+          "disabling one item silenced another");
+
+  // And re-enabling brings it back rather than leaving it permanently muted
+  // by the dedup state built up while it was off.
+  options.itemEnabled[static_cast<std::size_t>(ImportantItem::GoldenApple)] =
+      true;
+  player.heldItem = {"appleGold", "Golden Apple", 0, false};
+  const auto back = monitor.observe({player}, options, 1200);
+  require(back.size() == 1 &&
+              back[0].text.find("Golden Apple") != std::string::npos,
+          "a re-enabled item stayed silent");
+}
+
+void perItemTogglesSurviveAConfigRoundTrip() {
+  Configuration::Settings settings;
+  settings.itemAlerts[static_cast<std::size_t>(ImportantItem::Tnt)] = false;
+  settings.itemAlerts[static_cast<std::size_t>(ImportantItem::Obsidian)] =
+      false;
+  const auto decoded =
+      Configuration::deserialize(Configuration::serialize(settings));
+  for (std::size_t i = 1; i < kImportantItemCount; ++i) {
+    require(decoded.itemAlerts[i] == settings.itemAlerts[i],
+            "an item alert switch did not survive the round trip");
+  }
+  // A config written before these items existed must not mute them.
+  const auto legacy = Configuration::deserialize("version=4;master=1;");
+  for (std::size_t i = 1; i < kImportantItemCount; ++i) {
+    require(legacy.itemAlerts[i],
+            "an older config silently disabled an item alert");
+  }
+}
+
 void strictHeldItemAllowlistAndWoolRegressions() {
   const std::array<VisibleItem, 18> ignored = {{
       {"cloth", "Wool", 0, false},
@@ -1138,7 +1279,6 @@ void strictHeldItemAllowlistAndWoolRegressions() {
       {"endStone", "End Stone", 0, false},
       {"wood", "Oak Planks", 0, false},
       {"stainedGlass", "Blast-Proof Glass", 11, false},
-      {"obsidian", "Obsidian", 0, false},
       {"ladder", "Ladder", 0, false},
       {"waterBucket", "Water Bucket", 0, false},
       {"sponge", "Sponge", 0, false},
@@ -1146,7 +1286,8 @@ void strictHeldItemAllowlistAndWoolRegressions() {
       {"ingotGold", "Gold Ingot", 0, false},
       {"diamond", "Diamond", 0, false},
       {"emerald", "Emerald", 0, false},
-      {"pickaxeDiamond", "Diamond Pickaxe", 0, true},
+      {"pickaxeWood", "Wooden Pickaxe", 0, false},
+      {"pickaxeStone", "Stone Pickaxe", 0, false},
       {"shears", "Shears", 0, false},
       {"compass", "Item Shop", 0, true},
   }};
@@ -1429,7 +1570,7 @@ void configRoundTripKeepsEveryHudSlotDistinct() {
   }
   const auto decoded = Configuration::deserialize(
       Configuration::serialize(settings));
-  require(decoded.formatVersion == 4 && decoded.masterEnabled &&
+  require(decoded.formatVersion == 5 && decoded.masterEnabled &&
               decoded.modules[static_cast<std::size_t>(Module::ItemAlerts)] &&
               decoded.visibilityMode == VisibilityMode::CameraView,
           "configuration round trip lost the master, module or visibility "
@@ -1453,7 +1594,7 @@ void configV1MigrationPreservesPreferencesAndPositions() {
       "master=1;eventTimers=1;heightOverlay=1;resourceTracker=1;"
       "resourceHud=1;upgradeHud=1;bedTracker=1;timerX=0.25;timerY=0.35;"
       "timerScale=1.5;heightX=0.45;heightY=0.55;heightScale=1.7;");
-  require(migrated.formatVersion == 4 && migrated.masterEnabled &&
+  require(migrated.formatVersion == 5 && migrated.masterEnabled &&
               migrated.visibilityMode == VisibilityMode::RangeOnly,
           "v1 compatibility defaults failed");
   const auto timer = migrated.hud[static_cast<std::size_t>(HudId::EventTimer)];
@@ -1499,7 +1640,7 @@ void removedRendererConfigKeysAreIgnoredWithoutModuleShifts() {
           "pickupAlerts=1;armorAlerts=1;trapNotifier=1;resourceTracker=1;"
           "itemAlerts=1;upgradeHud=1;antiMisplace=1;bedTracker=1;";
       const auto migrated = Configuration::deserialize(data);
-      require(migrated.formatVersion == 4 &&
+      require(migrated.formatVersion == 5 &&
                   migrated.modules[static_cast<std::size_t>(
                       Module::PickupAlerts)] &&
                   migrated.modules[static_cast<std::size_t>(
@@ -1626,6 +1767,10 @@ int main() {
       {"death keeps armor, clears inventory", deathKeepsArmorButClearsInventoryState},
       {"death victim parsing", deathVictimParsesKnownPhrasesAndRejectsProse},
       {"strict held-item allowlist", strictHeldItemAllowlistAndWoolRegressions},
+      {"pickaxe tiers and obsidian", pickaxeTiersAndObsidianClassify},
+      {"alert colours in chat palette", alertColoursStayInsideTheChatPalette},
+      {"per-item toggles", perItemTogglesSilenceOnlyTheirOwnItem},
+      {"per-item toggle round trip", perItemTogglesSurviveAConfigRoundTrip},
       {"match-long item state", matchLongItemStateHandlesRangeAndEntityReuse},
       {"monotonic sword tiers", swordTiersAreMonotonicAndAllowlistIsExplicit},
       {"player rejection reasons", playerVisibilityAndIdentityRejectionsAreCounted},
