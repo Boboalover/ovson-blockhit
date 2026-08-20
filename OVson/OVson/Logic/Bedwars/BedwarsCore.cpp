@@ -63,14 +63,10 @@ std::string playerText(const PlayerObservation &player,
   return player.identity + tail;
 }
 
-std::vector<MessageSegment> playerSegments(const PlayerObservation &player,
-                                           const std::string &tail) {
-  return {{player.identity, teamArgb(player.team)}, {tail, kUncolouredArgb}};
-}
-
-// Same shape, but the thing the alert is about gets its own colour so the
-// item is readable at a glance instead of being one more white word in a
-// white sentence.
+// The player's name in their team colour, then the rest of the sentence, with
+// the thing the alert is actually about given its own colour so it is
+// readable at a glance instead of being one more white word in a white
+// sentence.
 std::vector<MessageSegment> playerItemSegments(const PlayerObservation &player,
                                                const std::string &prefix,
                                                const std::string &label,
