@@ -33,6 +33,10 @@ GUI.
 Everything below is off until the master switch is on, and each module is
 independently toggleable.
 
+The original upstream **Bed Defense** utility is separate from these fork-side
+tools. It remains in the Utils GUI, uses the independent `bedDefenseEnabled`
+setting, and is not controlled by the Bedwars Tools master switch.
+
 **Alerts on enemies.** Armour tier upgrades; sword tier upgrades from stone
 up; held items worth reacting to -- potions, bows, TNT, fireballs, ender
 pearls, golden apples, magic milk, bridge eggs, water buckets, dream

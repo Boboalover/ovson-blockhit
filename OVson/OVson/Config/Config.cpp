@@ -33,6 +33,7 @@ static bool g_proShowKills = true, g_proShowKdr = true, g_proShowBeds = true,
             g_proShowHp = true;
 
 static bool g_debugging = false;
+static bool g_bedDefenseEnabled = false;
 static int g_clickGuiKey = 45; // INSERT
 static bool g_clickGuiOn = true;
 static int g_uninjectKey = 35; // END
@@ -189,9 +190,11 @@ static HMODULE g_hModule = nullptr;
 
 static bool g_debugGlobal = false;
 static bool g_debugGameDetection = false;
+static bool g_debugBedDetection = false;
 static bool g_debugUrchin = false;
 static bool g_debugSeraph = false;
 static bool g_debugGUI = false;
+static bool g_debugBedDefense = false;
 static bool g_debugGeneral = false;
 
 static std::atomic<bool> g_savePending = false;
@@ -353,6 +356,9 @@ bool Config::initialize(HMODULE self) {
 
   if (!parseJsonBool(all, "debugging", g_debugging))
     g_debugging = false;
+
+  if (!parseJsonBool(all, "bedDefenseEnabled", g_bedDefenseEnabled))
+    g_bedDefenseEnabled = false;
 
   if (!parseJsonInt(all, "clickGuiKey", g_clickGuiKey))
     g_clickGuiKey = 45;
@@ -555,12 +561,16 @@ bool Config::initialize(HMODULE self) {
     g_debugGlobal = false;
   if (!parseJsonBool(all, "debugGameDetection", g_debugGameDetection))
     g_debugGameDetection = false;
+  if (!parseJsonBool(all, "debugBedDetection", g_debugBedDetection))
+    g_debugBedDetection = false;
   if (!parseJsonBool(all, "debugUrchin", g_debugUrchin))
     g_debugUrchin = false;
   if (!parseJsonBool(all, "debugSeraph", g_debugSeraph))
     g_debugSeraph = false;
   if (!parseJsonBool(all, "debugGUI", g_debugGUI))
     g_debugGUI = false;
+  if (!parseJsonBool(all, "debugBedDefense", g_debugBedDefense))
+    g_debugBedDefense = false;
   if (!parseJsonBool(all, "debugGeneral", g_debugGeneral))
     g_debugGeneral = false;
 
@@ -684,6 +694,7 @@ static bool saveImpl() {
       "  \"overlayMode\": \"%s\",\n"
       "  \"tabEnabled\": %s,\n"
       "  \"debugging\": %s,\n"
+      "  \"bedDefenseEnabled\": %s,\n"
       "  \"clickGuiKey\": %d,\n"
       "  \"clickGuiOn\": %s,\n"
       "  \"uninjectKey\": %d,\n"
@@ -724,9 +735,11 @@ static bool saveImpl() {
       "  \"chatStatsStyle\": \"%s\",\n"
       "  \"debugGlobal\": %s,\n"
       "  \"debugGameDetection\": %s,\n"
+      "  \"debugBedDetection\": %s,\n"
       "  \"debugUrchin\": %s,\n"
       "  \"debugSeraph\": %s,\n"
       "  \"debugGUI\": %s,\n"
+      "  \"debugBedDefense\": %s,\n"
       "  \"debugGeneral\": %s,\n"
       "  \"discordRpcEnabled\": %s,\n"
       "  \"discordAppId\": \"%s\",\n"
@@ -778,7 +791,7 @@ static bool saveImpl() {
       "  \"anticheatCooldownSec\": %d\n"
       "}\n",
       g_apiKey.c_str(), g_overlayMode.c_str(), g_tabEnabled ? "true" : "false",
-      g_debugging ? "true" : "false",
+      g_debugging ? "true" : "false", g_bedDefenseEnabled ? "true" : "false",
       g_clickGuiKey, g_clickGuiOn ? "true" : "false",
       g_uninjectKey, g_uninjectKeyEnabled ? "true" : "false",
       g_notificationsEnabled ? "true" : "false",
@@ -808,9 +821,9 @@ static bool saveImpl() {
       g_chatStatsFormat.c_str(),
       g_chatStatsStyle.c_str(),
       g_debugGlobal ? "true" : "false", g_debugGameDetection ? "true" : "false",
-      g_debugUrchin ? "true" : "false",
+      g_debugBedDetection ? "true" : "false", g_debugUrchin ? "true" : "false",
       g_debugSeraph ? "true" : "false", g_debugGUI ? "true" : "false",
-      g_debugGeneral ? "true" : "false",
+      g_debugBedDefense ? "true" : "false", g_debugGeneral ? "true" : "false",
       g_discordRpcEnabled ? "true" : "false", g_discordAppId.c_str(),
       g_spoofIp.c_str(),
       g_tabDisplayMode.c_str(), g_tabSortDescending ? "true" : "false",
@@ -924,6 +937,22 @@ void Config::setTabSortDescending(bool desc) {
 bool Config::isDebugging() { return g_debugging; }
 void Config::setDebugging(bool enabled) {
   g_debugging = enabled;
+  save();
+}
+
+bool Config::isBedDefenseEnabled() {
+  if (isForgeEnvironment())
+    return false;
+  return g_bedDefenseEnabled;
+}
+void Config::setBedDefenseEnabled(bool enabled) {
+  if (isForgeEnvironment()) {
+    Render::NotificationManager::getInstance()->add(
+        "System", "This mode is disabled on Forge",
+        Render::NotificationType::Warning);
+    return;
+  }
+  g_bedDefenseEnabled = enabled;
   save();
 }
 
@@ -1273,6 +1302,9 @@ void Config::setDebugEnabled(DebugCategory cat, bool enabled) {
   case DebugCategory::GameDetection:
     g_debugGameDetection = enabled;
     break;
+  case DebugCategory::BedDetection:
+    g_debugBedDetection = enabled;
+    break;
   case DebugCategory::Urchin:
     g_debugUrchin = enabled;
     break;
@@ -1281,6 +1313,9 @@ void Config::setDebugEnabled(DebugCategory cat, bool enabled) {
     break;
   case DebugCategory::GUI:
     g_debugGUI = enabled;
+    break;
+  case DebugCategory::BedDefense:
+    g_debugBedDefense = enabled;
     break;
   }
   save();

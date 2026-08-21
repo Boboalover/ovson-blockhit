@@ -46,6 +46,8 @@ set(OVSON_SOURCES
     Logic/BlockHitAudioBackend.cpp
     Logic/BlockHitHeuristic.cpp
     Logic/BlockHitSound.cpp
+    Logic/BedDefense/BedDefenseManager.cpp
+    Logic/BedDefense/BlockHook.cpp
     Chat/ChatAPI_Bridge.cpp
     Chat/ChatHook.cpp
     Chat/ChatSDK.cpp
@@ -81,13 +83,14 @@ set(OVSON_SOURCES
     Render/GL.cpp
     Render/StatsOverlay.cpp
     Render/RenderHook.cpp
+    Render/DefenseRenderer.cpp
     Render/NameTagRenderer.cpp
     Render/NotificationManager.cpp
     Render/RenderUtils.cpp
     Render/Shader.cpp
+    Render/TextureLoader.cpp
     Render/TechOverlay.cpp
     Logic/AutoGG.cpp
-    Utils/StbImageImpl.cpp
     Utils/Timer.cpp
     Utils/ChatBypasser.cpp
     Utils/ThreadTracker.cpp
@@ -143,11 +146,15 @@ set(OVSON_HEADERS
     Render/GL.h
     Render/StatsOverlay.h
     Render/RenderHook.h
+    Render/DefenseRenderer.h
     Render/NameTagRenderer.h
     Render/NotificationManager.h
     Render/RenderUtils.h
     Render/Shader.h
+    Render/TextureLoader.h
     Render/TechOverlay.h
+    Logic/BedDefense/BedDefenseManager.h
+    Logic/BedDefense/BlockHook.h
     Logic/AutoGG.h
     Logic/PacketHook.h
     Logic/BlockHitSound.h
@@ -187,6 +194,9 @@ if(MSVC)
         Logic/BlockHitAudio.cpp
         Logic/BlockHitAudioBackend.cpp
         Logic/BlockHitSound.cpp
+        Logic/BedDefense/BedDefenseManager.cpp
+        Logic/BedDefense/BlockHook.cpp
+        Render/DefenseRenderer.cpp
         Render/NotificationManager.cpp
         Render/RenderHook.cpp
         Render/BedwarsOverlay.cpp
@@ -334,4 +344,11 @@ if(OVSON_BUILD_TESTS AND BUILD_TESTING)
     endif()
     add_test(NAME OVson.BlockHitAudio
              COMMAND OVsonBlockHitAudioTests)
+
+    add_test(
+        NAME OVson.BedDefenseRestoration
+        COMMAND ${CMAKE_COMMAND}
+                "-DOVSON_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/BedDefenseRestoration.cmake"
+    )
 endif()

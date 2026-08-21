@@ -2,6 +2,7 @@
 #include "../Config/Config.h"
 #include "../Java.h"
 #include "../SDK/McAccess.h"
+#include "../Logic/BedDefense/BedDefenseManager.h"
 #include "../Logic/PacketHook.h"
 #include "../Logic/StatsTracker.h"
 #include "../Utils/Anticheat/AcInternal.h"
@@ -15,6 +16,7 @@
 #include "../ClickGUI/ClickGUI.h"
 #include "BedwarsOverlay.h"
 #include "../Logic/Bedwars/BedwarsRuntime.h"
+#include "DefenseRenderer.h"
 #include "NameTagRenderer.h"
 #include "NotificationManager.h"
 #include "StatsOverlay.h"
@@ -763,6 +765,10 @@ static void renderOverlayWorkBody(HDC hdc) {
     StatsOverlay::render((void *)hdc);
   });
 
+  runSubsystem("DefenseRenderer::render", [hdc]() {
+    BedDefense::DefenseRenderer::getInstance()->render((void *)hdc, 0.0);
+  });
+
   runSubsystem("NameTagRenderer::render", [hdc]() {
     OVson::NameTagRenderer::getInstance()->render((void *)hdc, 0.0);
   });
@@ -822,6 +828,10 @@ static void renderOverlayWorkBody(HDC hdc) {
       BetterTab::render((void *)hdc);
     });
   }
+
+  runSubsystem("BedDefenseManager::tick", []() {
+    BedDefense::BedDefenseManager::getInstance()->tick();
+  });
 
   runSubsystem("Anticheat::tickFromRenderThread", []() {
     Anticheat::tickFromRenderThread();

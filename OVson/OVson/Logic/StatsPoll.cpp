@@ -3,6 +3,7 @@
 
 #include "../Config/Config.h"
 #include "../Java.h"
+#include "../Logic/BedDefense/BedDefenseManager.h"
 #include "../Render/RenderHook.h"
 #include "../Utils/SafeGuard.h"
 #include "../Utils/Timer.h"
@@ -77,6 +78,10 @@ void pollBody() {
     if (lastTagSync == 0 || (now - lastTagSync) >= 2000) {
       lastTagSync = now;
       syncTags();
+    }
+
+    if (Config::isBedDefenseEnabled()) {
+      BedDefense::BedDefenseManager::getInstance()->tick();
     }
 
     queuePlayersForFetching();

@@ -18,6 +18,7 @@
 #include "Chat/Commands.h"
 #include "Config/Config.h"
 #include "Render/RenderHook.h"
+#include "Render/TextureLoader.h"
 #include "Plugins/PluginLoader.h"
 #include "Chat/ChatAPI_Bridge.h"
 #include "JavaHook/JavaHook.h"
@@ -143,6 +144,7 @@ void init(void *instance) {
 
     lc->GetLoadedClasses();
     Config::initialize(static_cast<HMODULE>(instance));
+    BedDefense::TextureLoader::setModule(static_cast<HMODULE>(instance));
     OVson::Bedwars::Configuration::initialize();
     RegisterDefaultCommands();
     OVson::initialize();

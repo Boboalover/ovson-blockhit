@@ -1,16 +1,18 @@
 # OVson — change report for upstream
 
 Fork: `Boboalover/ovson-blockhit` · base: `alperenproo/ovson`
-Two features: **client-side block-hit sound** and **Bedwars Tools**.
+Two fork features: **client-side block-hit sound** and **Bedwars Tools**.
+The original upstream **Bed Defense** feature remains present; an accidental
+fork-side deletion of it has been reversed without redesigning it.
 
-**75 files changed, +13 111 / −3 089** against `alperenproo/ovson@main`
+**63 files changed, +13 656 / −272** against `alperenproo/ovson@main`
 (line-ending noise excluded — the fork's working tree is CRLF, so diff with
-`--ignore-cr-at-eol` or the stat is useless). Of those, 57 are DLL sources
-(§2–§6), 10 are the loader (§7), and the rest are docs and `.gitignore`.
+`--ignore-cr-at-eol` or the stat is useless).
 
-Verified before writing this: all three deterministic test suites pass
-(**72 + 56 + 66 = 194 checks**), the x64 DLL links clean, and every JNI change
-was re-checked against a deobfuscated client. Details in
+Verified before writing this: all three deterministic behavior suites pass
+(**72 + 56 + 66 = 194 checks**), the 13-check Bed Defense restoration audit
+passes, the x64 DLL links clean, and every JNI change was re-checked against a
+deobfuscated client. Details in
 [Verification](#verification).
 
 ---
@@ -77,13 +79,15 @@ Two missing notch signatures (`getChatComponent` → `()Leu;`,
 `componentToJson` → `(Leu;)Ljava/lang/String;`), plus one call into the Bedwars
 runtime from `processIncomingChat`.
 
-### `Chat/Commands.cpp` — +27 / −66
-`.bedplates` and `.bedscan` deleted with the bed feature. `.lookat` used to
-print block name and metadata via `BedDefenseManager`; it now reads both
-straight off the block state (`getUnlocalizedName`, `getMetaFromState`), so the
-command's output is unchanged. The reporter is muted around the metadata lookup
-so a client with different mappings cannot spam `FAILED:` into chat over a
-cosmetic field.
+### `Chat/Commands.cpp`
+The original `.bedplates` and `.bedscan` commands are restored with their
+upstream names, messages, Forge guard, manager calls, and registration.
+`.lookat` remains the one mechanical compatibility exception: it reads block
+name and metadata straight off the block state (`getUnlocalizedName`,
+`getMetaFromState`) rather than routing through `BedDefenseManager`. Its output
+is equivalent, and the reporter stays muted around the metadata lookup so a
+client with different mappings cannot spam `FAILED:` into chat over a cosmetic
+field.
 
 ### `JavaHook/JavaHook.cpp` — +16
 `shutdown()` now calls `DisposeEnvironment()`. Each `GetEnv()` in
@@ -110,25 +114,33 @@ Now:
   so once teardown starts the stub is a pure pass-through.
 
 Also new: `gameWindowHandle()` (see §4), and the render-thread calls into the
-Bedwars runtime/overlay.
+Bedwars runtime/overlay. The original `DefenseRenderer::render` and
+`BedDefenseManager::tick` calls are restored alongside those additions.
 
-### `dllmain.cpp` — +173 / −17
+### `dllmain.cpp`
 Honours `mustStayLoaded()`: saves config and `ExitThread` instead of
 `FreeLibraryAndExitThread`, so the module leaks rather than taking another mod
-down with it. Rest is the uninject work in §4.
+down with it. The original `BedDefense::TextureLoader::setModule(...)`
+initialization is restored after config initialization. The rest is the
+uninject work in §4.
 
 ### `Render/NotificationManager.*` — +59 / −24
 New `addRich(...)` taking coloured segments, and a `maximumVisible` cap on both
 entry points. Existing `add(...)` keeps its signature via defaults.
 
-### `ClickGUI/Render.cpp` (+330/−38), `ClickGUI/Tabs/Utils.cpp` (+141/−37), `Tabs/Debug.cpp`, `Tabs/Tabs.h`
-New Bedwars tab wiring, block-hit sound controls in Utils, and removal of the
-two bed debug toggles.
+### `ClickGUI/Render.cpp`, `ClickGUI/Tabs/Utils.cpp`, `Tabs/Debug.cpp`, `Tabs/Tabs.h`
+New Bedwars tab wiring and block-hit sound controls in Utils. The original Bed
+Defense card remains in the Utils tab and UTILS legacy window, and the original
+Bed Detection / Bed Defense diagnostic controls are restored in both debug
+layouts.
 
-### `Config/Config.*` — +121 / −46
+### `Config/Config.*`
 Block-hit sound settings, `getDataDirectory()`, an opaque
-`bedwarsSettingsData` blob, and removal of `BedDefense` / `BedDetection` from
-`DebugCategory` (mirrored in `Utils/Logger.cpp`, −6).
+`bedwarsSettingsData` blob, and the original independent `bedDefenseEnabled`
+setting. Its upstream default (`false`), load fallback, save path, accessors,
+Forge guard, and `BedDetection` / `BedDefense` debug categories are restored.
+The logging categories are mirrored in `Utils/Logger.cpp`. Bedwars config
+format version 5 is unchanged and does not control Bed Defense.
 
 ### `CMakeLists.txt` — +222 / −30
 Worth flagging: upstream's CMakeLists did not build. It listed
@@ -136,11 +148,17 @@ Worth flagging: upstream's CMakeLists did not build. It listed
 (all of `ClickGUI/`, `JavaHook/`, `Plugins/`, several `Services/`, `Render/GL`,
 `Shader`, `Framebuffer`, `BetterTab`, `Watchdog`, `CrashDump`,
 `NumberDenicker`, `StatColors`). Presumably the real build is a `.vcxproj`.
-The file list is now complete and three CTest targets were added.
+The file list is now complete. Three behavior CTest targets and one 13-check
+Bed Defense restoration audit are registered.
+The original four Bed Defense translation units and four headers are restored
+to that complete manifest. `Render/TextureLoader.cpp` again owns the sole
+`STB_IMAGE_IMPLEMENTATION`, so the temporary `Utils/StbImageImpl.cpp` created
+when Bed Defense was deleted has been removed.
 
 ### `Logic/StatsPoll.cpp`, `Logic/HypixelGameState.cpp`, `Logic/StatsTracker.internal.h`
-Three one-liners: drop the bed-defense tick, forward scoreboard lines to the
-Bedwars runtime, declare `closestTeamColor`.
+The original config-gated Bed Defense tick is restored in `StatsPoll`. The
+fork's scoreboard forwarding to the Bedwars runtime and `closestTeamColor`
+declaration remain unchanged.
 
 ---
 
@@ -267,21 +285,32 @@ silently dropped on the next load. `hud[]` is now the only home; the fields are
 
 ---
 
-## 6. Removed: bed features
+## 6. Restored: original upstream Bed Defense
 
-Deleted entirely (8 files, −2 639):
-`Logic/BedDefense/{BedDefenseManager,BlockHook}.{cpp,h}`,
-`Render/{DefenseRenderer,TextureLoader}.{cpp,h}`.
+The original upstream Bed Defense/Bed ESP was accidentally removed while the
+experimental fork-side bed modules were being deleted. That deletion is now
+reversed. These eight standalone files are restored byte-for-byte from
+`upstream/main`:
 
-Also gone: `Module::AntiMisplace`, `Module::BedTracker`, `HudId::BedDistance`,
-`HudId::BedStatus`, the `.bedplates` / `.bedscan` commands, the Utils-tab card,
-the two debug categories, and every bed-related config key (still parsed and
-discarded for old files).
+- `Logic/BedDefense/{BedDefenseManager,BlockHook}.{cpp,h}`
+- `Render/{DefenseRenderer,TextureLoader}.{cpp,h}`
 
-`Render/TextureLoader.cpp` was the single translation unit defining
-`STB_IMAGE_IMPLEMENTATION`. `Utils/StbImageImpl.cpp` now owns it — it is
-deliberately excluded from the `/W4` list, since `stb_image.h` is not
-warning-clean.
+The original 64 texture assets and resource entries were already intact and
+remain byte-identical to upstream. The original config, two GUI layouts, two
+debug controls, commands, DLL module-handle initialization, render call, and
+both upstream manager-tick call sites are restored. The feature stays disabled
+by default, is controlled only by `bedDefenseEnabled`, and is not gated by the
+Bedwars Tools master switch.
+
+No new Bedwars-specific ESP was introduced. `Module::AntiMisplace`,
+`Module::BedTracker`, `HudId::BedDistance`, `HudId::BedStatus`,
+`BedwarsPlacementHook`, the eight-cell placement heuristic, and the
+experimental RGB/opacity/team-owned-bed controls remain removed. Block-hit and
+Bedwars alert behavior were not changed by this restoration.
+
+`Render/TextureLoader.cpp` again owns the one and only
+`STB_IMAGE_IMPLEMENTATION`. The temporary `Utils/StbImageImpl.cpp` is removed
+as a direct reversal of the earlier Bed Defense deletion.
 
 ---
 
@@ -323,16 +352,20 @@ closed while an injection is in flight.
 | `OVson.Bedwars` | 72/72 |
 | `OVson.BlockHitHeuristic` | 56/56 |
 | `OVson.BlockHitAudio` | 66/66 |
+| `OVson.BedDefenseRestoration` | 13/13 |
 
-Build: MSVC x64, exit code 0, `[13/13] Linking CXX shared library bin\OVson.dll`,
-machine type `0x8664`. Only pre-existing warnings (`C4456`, `C4505`, `C4100`).
+Build: MSVC x64, exit code 0, linked `bin\OVson.dll`, machine type `0x8664`.
+Only pre-existing warnings were observed (`D9025`, `C4244`, `C4456`, `C4505`,
+and `C4100`); none came from a restored Bed Defense source file. A targeted
+MSVC `/analyze` pass over the four restored translation units also completed
+without source or analyzer warnings.
 
 Confirmed in-game on an obfuscated client after the mapping fixes: world
 resolved, lifecycle phase reached, all 12 JNI field/method bindings resolved,
 and real alerts fired (sword upgrades, diamond armour, enemy Sharpness, golden
 apple).
 
-Three temporary diagnostic blocks are still in place and should be dropped
+Four temporary diagnostic blocks are still in place and should be dropped
 before merge if you would rather not carry them: `[Bedwars] held ...`,
 `[Bedwars] JNI mapping`, `[Bedwars] lifecycle inputs` (all debug-gated), and
 `[PacketHook] discovery stalled at: ...`.

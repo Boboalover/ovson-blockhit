@@ -12,6 +12,7 @@
 #include "LiquidGlass.h"
 #include "../Render/NotificationManager.h"
 #include "../Render/StatsOverlay.h"
+#include "../Logic/BedDefense/BedDefenseManager.h"
 #include "../Logic/Bedwars/BedwarsConfig.h"
 #include "../Logic/Bedwars/BedwarsCore.h"
 #include "../Logic/Bedwars/BedwarsRuntime.h"
@@ -517,6 +518,12 @@ static void ensureLbWindows() {
     }
     {
       LbWindow w{"UTILS", 264, 44, true, {}};
+      w.mods.push_back({"Bed Defense", &Config::isBedDefenseEnabled,
+                        [](bool b) {
+                          Config::setBedDefenseEnabled(b);
+                          auto *bd = BedDefense::BedDefenseManager::getInstance();
+                          if (b) bd->enable(); else bd->disable();
+                        }, {}});
       w.mods.push_back(
           {"Block-Hit Sound (Client Heuristic)", &Config::isBlockHitSoundEnabled,
            &Config::setBlockHitSoundEnabled,
@@ -877,6 +884,9 @@ static void ensureLbWindows() {
                          subToggle("Game Detect",
                             [] { return Config::isDebugEnabled(DC::GameDetection); },
                             [](bool b) { Config::setDebugEnabled(DC::GameDetection, b); }),
+                         subToggle("Bed Detect",
+                            [] { return Config::isDebugEnabled(DC::BedDetection); },
+                            [](bool b) { Config::setDebugEnabled(DC::BedDetection, b); }),
                          subToggle("Urchin",
                             [] { return Config::isDebugEnabled(DC::Urchin); },
                             [](bool b) { Config::setDebugEnabled(DC::Urchin, b); }),
@@ -885,7 +895,10 @@ static void ensureLbWindows() {
                             [](bool b) { Config::setDebugEnabled(DC::Seraph, b); }),
                          subToggle("GUI",
                             [] { return Config::isDebugEnabled(DC::GUI); },
-                            [](bool b) { Config::setDebugEnabled(DC::GUI, b); })}});
+                            [](bool b) { Config::setDebugEnabled(DC::GUI, b); }),
+                         subToggle("Bed Defense",
+                            [] { return Config::isDebugEnabled(DC::BedDefense); },
+                            [](bool b) { Config::setDebugEnabled(DC::BedDefense, b); })}});
       s_lbWins.push_back(std::move(w));
     }
 
