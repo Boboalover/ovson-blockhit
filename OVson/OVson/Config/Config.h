@@ -99,6 +99,23 @@ void setBlockHitSoundFilename(const std::string &filename);
 float getBlockHitSoundVolume();
 void setBlockHitSoundVolume(float volumePercent);
 
+// /nick book scoring alerts. The scorer's fitted weights are intentionally
+// fixed; only the pass line and notification behavior are user-configurable.
+int getNickScoreThreshold();
+void setNickScoreThreshold(int threshold);
+bool isNickScorePingEnabled();
+void setNickScorePingEnabled(bool enabled);
+bool isNickScoreAlertEveryEnabled();
+void setNickScoreAlertEveryEnabled(bool enabled);
+// Auto-reroll presses TRY AGAIN for a name that missed the threshold, using
+// the command the page itself puts behind that button. Off by default.
+bool isNickRollAutoRerollEnabled();
+void setNickRollAutoRerollEnabled(bool enabled);
+int getNickRollRerollDelayMs();
+void setNickRollRerollDelayMs(int milliseconds);
+int getNickRollRerollCap();
+void setNickRollRerollCap(int cap);
+
 // click gui settings
 int getClickGuiKey();
 void setClickGuiKey(int key);

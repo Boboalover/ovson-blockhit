@@ -16,6 +16,7 @@
 #include "../ClickGUI/ClickGUI.h"
 #include "BedwarsOverlay.h"
 #include "../Logic/Bedwars/BedwarsRuntime.h"
+#include "../Logic/NickRoll/NickRollRuntime.h"
 #include "DefenseRenderer.h"
 #include "NameTagRenderer.h"
 #include "NotificationManager.h"
@@ -859,6 +860,8 @@ static void renderOverlayWorkBody(HDC hdc) {
   runSubsystem("BedwarsRuntime::tick", []() {
     OVson::Bedwars::Runtime::instance().tick();
   });
+
+  runSubsystem("NickRoll::tick", []() { OVson::NickRoll::tick(); });
 
   runSubsystem("BedwarsOverlay::render", [hdc]() {
     GLint vp[4];

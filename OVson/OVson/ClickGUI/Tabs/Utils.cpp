@@ -8,6 +8,7 @@
 #include "../../Logic/BedDefense/BedDefenseManager.h"
 #include "../../Logic/BlockHitSound.h"
 #include "../../Utils/ReplaySpammer.h"
+#include <cmath>
 #include <cstdio>
 #include <gl/GL.h>
 #include <string>
@@ -163,6 +164,109 @@ void renderUtils(TabCtx &ctx) {
                   : NotificationType::Warning);
   }
   cy += 110;
+
+  drawSectionLabel(cx, cy, "Nick Score Alerts", alpha);
+  const float nickScoreCardH = 298.0f;
+  const bool hNickScore =
+      isHovered(mx, my, mainX + 190, cy + 30, g_w - 210, nickScoreCardH);
+  glDisable(GL_TEXTURE_2D);
+  drawThemeCard(mainX + 190, cy + 30, g_w - 210, nickScoreCardH,
+                hNickScore, alpha);
+  glEnable(GL_TEXTURE_2D);
+
+  g_guiFont.drawString(cx, cy + 40, "Score generated /nick names",
+                       applyAlpha(0xFFFFFFFF, alpha));
+  g_guiFont.drawString(
+      cx, cy + 58,
+      "Reads the open book, scores the name, stops when one passes",
+      applyAlpha(0xFFA0A0A5, alpha), 0.43f);
+
+  float nickThreshold =
+      static_cast<float>(Config::getNickScoreThreshold());
+  char thresholdText[16]{};
+  snprintf(thresholdText, sizeof(thresholdText), "%d",
+           static_cast<int>(nickThreshold));
+  g_guiFont.drawString(cx + 10, cy + 88, "Stop score",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  const float thresholdTextWidth =
+      g_guiFont.getStringWidth(thresholdText) * (0.42f / 0.5f);
+  g_guiFont.drawString(mainX + g_w - 38.0f - thresholdTextWidth, cy + 88,
+                       thresholdText, applyAlpha(accent(), alpha), 0.42f);
+  if (drawSlider(3070, cx + 82.0f, cy + 96.0f, g_w - 328.0f, 8.0f,
+                 nickThreshold, 0.0f, 100.0f, mx, my,
+                 lClick && hNickScore, alpha)) {
+    Config::setNickScoreThreshold(
+        static_cast<int>(std::lround(nickThreshold)));
+  }
+
+  const float nickScoreSwX = mainX + g_w - 65;
+  const bool nickPing = Config::isNickScorePingEnabled();
+  const bool hNickPing =
+      hNickScore && my >= cy + 112.0f && my < cy + 148.0f;
+  g_guiFont.drawString(cx + 10, cy + 124, "Ping when a name passes",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  glDisable(GL_TEXTURE_2D);
+  drawSwitch(70, nickScoreSwX, cy + 121, nickPing, hNickPing, alpha);
+  glEnable(GL_TEXTURE_2D);
+
+  const bool alertEvery = Config::isNickScoreAlertEveryEnabled();
+  const bool hAlertEvery =
+      hNickScore && my >= cy + 148.0f && my < cy + 184.0f;
+  g_guiFont.drawString(cx + 10, cy + 160,
+                       alertEvery ? "Alert every nick" : "Alert only found",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  glDisable(GL_TEXTURE_2D);
+  drawSwitch(71, nickScoreSwX, cy + 157, alertEvery, hAlertEvery, alpha);
+  glEnable(GL_TEXTURE_2D);
+
+  const bool autoReroll = Config::isNickRollAutoRerollEnabled();
+  const bool hAutoReroll =
+      hNickScore && my >= cy + 184.0f && my < cy + 220.0f;
+  g_guiFont.drawString(cx + 10, cy + 196, "Auto TRY AGAIN until one passes",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  glDisable(GL_TEXTURE_2D);
+  drawSwitch(72, nickScoreSwX, cy + 193, autoReroll, hAutoReroll, alpha);
+  glEnable(GL_TEXTURE_2D);
+
+  float rerollDelay =
+      static_cast<float>(Config::getNickRollRerollDelayMs());
+  char delayText[16]{};
+  snprintf(delayText, sizeof(delayText), "%dms",
+           static_cast<int>(rerollDelay));
+  g_guiFont.drawString(cx + 10, cy + 228, "Delay",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  const float delayTextWidth =
+      g_guiFont.getStringWidth(delayText) * (0.42f / 0.5f);
+  g_guiFont.drawString(mainX + g_w - 38.0f - delayTextWidth, cy + 228,
+                       delayText, applyAlpha(accent(), alpha), 0.42f);
+  if (drawSlider(3071, cx + 82.0f, cy + 236.0f, g_w - 328.0f, 8.0f,
+                 rerollDelay, 250.0f, 5000.0f, mx, my,
+                 lClick && hNickScore, alpha)) {
+    Config::setNickRollRerollDelayMs(
+        static_cast<int>(std::lround(rerollDelay)));
+  }
+
+  float rerollCap = static_cast<float>(Config::getNickRollRerollCap());
+  char capText[16]{};
+  snprintf(capText, sizeof(capText), "%d", static_cast<int>(rerollCap));
+  g_guiFont.drawString(cx + 10, cy + 262, "Max rerolls",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  const float capTextWidth =
+      g_guiFont.getStringWidth(capText) * (0.42f / 0.5f);
+  g_guiFont.drawString(mainX + g_w - 38.0f - capTextWidth, cy + 262, capText,
+                       applyAlpha(accent(), alpha), 0.42f);
+  if (drawSlider(3072, cx + 82.0f, cy + 270.0f, g_w - 328.0f, 8.0f, rerollCap,
+                 10.0f, 2000.0f, mx, my, lClick && hNickScore, alpha)) {
+    Config::setNickRollRerollCap(static_cast<int>(std::lround(rerollCap)));
+  }
+
+  if (clickEvent && hNickPing)
+    Config::setNickScorePingEnabled(!nickPing);
+  else if (clickEvent && hAlertEvery)
+    Config::setNickScoreAlertEveryEnabled(!alertEvery);
+  else if (clickEvent && hAutoReroll)
+    Config::setNickRollAutoRerollEnabled(!autoReroll);
+  cy += 348;
 
   drawSectionLabel(cx, cy, "Block-Hit Sound (Client Heuristic)", alpha);
   const float blockSoundCardH = 276.0f;

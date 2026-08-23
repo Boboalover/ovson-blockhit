@@ -26,6 +26,7 @@
 #include "Logic/PacketHook.h"
 #include "Logic/Bedwars/BedwarsConfig.h"
 #include "Logic/Bedwars/BedwarsRuntime.h"
+#include "Logic/NickRoll/NickRollRuntime.h"
 #include "Utils/Logger.h"
 #include <ShlObj.h>
 #include "Utils/ReplaySpammer.h"
@@ -351,6 +352,7 @@ void init(void *instance) {
 
   try {
     Logger::info("Shutting down ChatInterceptor...");
+    OVson::NickRoll::shutdown();
     OVson::Bedwars::Runtime::instance().shutdown();
     OVson::shutdown();
     ChatHook::uninstall();

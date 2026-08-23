@@ -42,6 +42,9 @@ set(OVSON_SOURCES
     Logic/Bedwars/BedwarsCore.cpp
     Logic/Bedwars/BedwarsMaps.cpp
     Logic/Bedwars/BedwarsRuntime.cpp
+    Logic/NickRoll/NickRollCore.cpp
+    Logic/NickRoll/NickRollRuntime.cpp
+    Logic/NickRoll/NickScore.cpp
     Logic/BlockHitAudio.cpp
     Logic/BlockHitAudioBackend.cpp
     Logic/BlockHitHeuristic.cpp
@@ -116,6 +119,9 @@ set(OVSON_HEADERS
     Logic/Bedwars/BedwarsConfig.h
     Logic/Bedwars/BedwarsCore.h
     Logic/Bedwars/BedwarsRuntime.h
+    Logic/NickRoll/NickRollCore.h
+    Logic/NickRoll/NickRollRuntime.h
+    Logic/NickRoll/NickScore.h
     Logic/BlockHitHeuristic.h
     Logic/BlockHitAudio.h
     Logic/BlockHitAudioBackend.h
@@ -344,6 +350,46 @@ if(OVSON_BUILD_TESTS AND BUILD_TESTING)
     endif()
     add_test(NAME OVson.BlockHitAudio
              COMMAND OVsonBlockHitAudioTests)
+
+    # The /nick command is limited to six uses a day, so everything that can
+    # be settled without the game is settled here instead.
+    add_executable(OVsonNickRollTests
+        Logic/NickRoll/NickRollCore.cpp
+        Logic/NickRoll/NickRollCore.h
+        tests/NickRollTests.cpp
+    )
+    target_include_directories(OVsonNickRollTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    if(MSVC)
+        target_compile_options(OVsonNickRollTests PRIVATE /W4)
+    endif()
+    add_test(NAME OVson.NickRoll COMMAND OVsonNickRollTests)
+
+    add_executable(OVsonNickScoreTests
+        Logic/NickRoll/NickScore.cpp
+        Logic/NickRoll/NickScore.h
+        tests/NickScoreTests.cpp
+    )
+    target_include_directories(OVsonNickScoreTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    if(MSVC)
+        target_compile_options(OVsonNickScoreTests PRIVATE /W4)
+    endif()
+    add_test(NAME OVson.NickScore COMMAND OVsonNickScoreTests)
+
+    add_executable(OVsonNickScoreParity
+        Logic/NickRoll/NickScore.cpp
+        Logic/NickRoll/NickScore.h
+        tests/NickScoreParity.cpp
+    )
+    target_include_directories(OVsonNickScoreParity PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    add_test(NAME OVson.NickScoreParity
+             COMMAND OVsonNickScoreParity
+                     ${CMAKE_CURRENT_SOURCE_DIR}/../../nickscore-parity.tsv)
 
     add_test(
         NAME OVson.BedDefenseRestoration

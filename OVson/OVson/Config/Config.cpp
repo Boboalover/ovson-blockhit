@@ -159,6 +159,15 @@ static bool g_blockHitSoundDebugEnabled =
 static std::string g_blockHitSoundSource = "Default";
 static std::string g_blockHitSoundFilename = "block-hit.wav";
 static float g_blockHitSoundVolume = BlockHitAudio::kDefaultVolumePercent;
+static int g_nickScoreThreshold = 70;
+static bool g_nickScorePingEnabled = true;
+static bool g_nickScoreAlertEveryEnabled = true;
+static bool g_nickRollAutoRerollEnabled = false;
+// 600ms is deliberately unhurried. The book has to redraw and the server has
+// to answer between presses, and a delay short enough to outrun that reads the
+// same page twice and burns rerolls on a name it already scored.
+static int g_nickRollRerollDelayMs = 600;
+static int g_nickRollRerollCap = 300;
 static bool g_techEnabled = false;
 static bool g_anticheatEnabled = true;
 static bool g_anticheatNoSlowEnabled = true;
@@ -519,6 +528,28 @@ bool Config::initialize(HMODULE self) {
     g_blockHitSoundVolume = BlockHitAudio::kDefaultVolumePercent;
   g_blockHitSoundVolume =
       BlockHitAudio::sanitizeVolumePercent(g_blockHitSoundVolume);
+  if (!parseJsonInt(all, "nickScoreThreshold", g_nickScoreThreshold))
+    g_nickScoreThreshold = 70;
+  if (g_nickScoreThreshold < 0) g_nickScoreThreshold = 0;
+  if (g_nickScoreThreshold > 100) g_nickScoreThreshold = 100;
+  if (!parseJsonBool(all, "nickScorePingEnabled", g_nickScorePingEnabled))
+    g_nickScorePingEnabled = true;
+  if (!parseJsonBool(all, "nickScoreAlertEveryEnabled",
+                     g_nickScoreAlertEveryEnabled))
+    g_nickScoreAlertEveryEnabled = true;
+  // Auto-reroll defaults OFF. It presses a button in the player's game; that
+  // is not something to turn on behind their back on first launch.
+  if (!parseJsonBool(all, "nickRollAutoRerollEnabled",
+                     g_nickRollAutoRerollEnabled))
+    g_nickRollAutoRerollEnabled = false;
+  if (!parseJsonInt(all, "nickRollRerollDelayMs", g_nickRollRerollDelayMs))
+    g_nickRollRerollDelayMs = 600;
+  if (g_nickRollRerollDelayMs < 250) g_nickRollRerollDelayMs = 250;
+  if (g_nickRollRerollDelayMs > 5000) g_nickRollRerollDelayMs = 5000;
+  if (!parseJsonInt(all, "nickRollRerollCap", g_nickRollRerollCap))
+    g_nickRollRerollCap = 300;
+  if (g_nickRollRerollCap < 10) g_nickRollRerollCap = 10;
+  if (g_nickRollRerollCap > 2000) g_nickRollRerollCap = 2000;
 
   if (g_discordAppId == "1335272304856010773") {
     g_discordAppId = "1467865675262329019";
@@ -753,6 +784,12 @@ static bool saveImpl() {
       "  \"blockHitSoundSource\": \"%s\",\n"
       "  \"blockHitSoundFilename\": \"%s\",\n"
       "  \"blockHitSoundVolume\": %.2f,\n"
+      "  \"nickScoreThreshold\": %d,\n"
+      "  \"nickScorePingEnabled\": %s,\n"
+      "  \"nickScoreAlertEveryEnabled\": %s,\n"
+      "  \"nickRollAutoRerollEnabled\": %s,\n"
+      "  \"nickRollRerollDelayMs\": %d,\n"
+      "  \"nickRollRerollCap\": %d,\n"
       "  \"sortMode\": \"%s\",\n"
       "  \"ovShowStar\": %s, \"ovShowFk\": %s, \"ovShowFkdr\": %s, "
       "\"ovShowWins\": %s, \"ovShowWlr\": %s, \"ovShowWs\": %s,\n"
@@ -833,6 +870,10 @@ static bool saveImpl() {
       g_blockHitSoundDebugEnabled ? "true" : "false",
       g_blockHitSoundSource.c_str(), g_blockHitSoundFilename.c_str(),
       g_blockHitSoundVolume,
+      g_nickScoreThreshold, g_nickScorePingEnabled ? "true" : "false",
+      g_nickScoreAlertEveryEnabled ? "true" : "false",
+      g_nickRollAutoRerollEnabled ? "true" : "false",
+      g_nickRollRerollDelayMs, g_nickRollRerollCap,
       g_sortMode.c_str(),
       g_ovShowStar ? "true" : "false", g_ovShowFk ? "true" : "false",
       g_ovShowFkdr ? "true" : "false", g_ovShowWins ? "true" : "false",
@@ -1012,6 +1053,56 @@ void Config::setBlockHitSoundVolume(float volumePercent) {
       BlockHitAudio::sanitizeVolumePercent(volumePercent);
   if (g_blockHitSoundVolume == sanitized) return;
   g_blockHitSoundVolume = sanitized;
+  save();
+}
+
+int Config::getNickScoreThreshold() { return g_nickScoreThreshold; }
+void Config::setNickScoreThreshold(int threshold) {
+  const int sanitized = threshold < 0 ? 0 : (threshold > 100 ? 100 : threshold);
+  if (g_nickScoreThreshold == sanitized) return;
+  g_nickScoreThreshold = sanitized;
+  save();
+}
+
+bool Config::isNickScorePingEnabled() { return g_nickScorePingEnabled; }
+void Config::setNickScorePingEnabled(bool enabled) {
+  if (g_nickScorePingEnabled == enabled) return;
+  g_nickScorePingEnabled = enabled;
+  save();
+}
+
+bool Config::isNickScoreAlertEveryEnabled() {
+  return g_nickScoreAlertEveryEnabled;
+}
+void Config::setNickScoreAlertEveryEnabled(bool enabled) {
+  if (g_nickScoreAlertEveryEnabled == enabled) return;
+  g_nickScoreAlertEveryEnabled = enabled;
+  save();
+}
+
+bool Config::isNickRollAutoRerollEnabled() {
+  return g_nickRollAutoRerollEnabled;
+}
+void Config::setNickRollAutoRerollEnabled(bool enabled) {
+  if (g_nickRollAutoRerollEnabled == enabled) return;
+  g_nickRollAutoRerollEnabled = enabled;
+  save();
+}
+
+int Config::getNickRollRerollDelayMs() { return g_nickRollRerollDelayMs; }
+void Config::setNickRollRerollDelayMs(int milliseconds) {
+  const int sanitized =
+      milliseconds < 250 ? 250 : (milliseconds > 5000 ? 5000 : milliseconds);
+  if (g_nickRollRerollDelayMs == sanitized) return;
+  g_nickRollRerollDelayMs = sanitized;
+  save();
+}
+
+int Config::getNickRollRerollCap() { return g_nickRollRerollCap; }
+void Config::setNickRollRerollCap(int cap) {
+  const int sanitized = cap < 10 ? 10 : (cap > 2000 ? 2000 : cap);
+  if (g_nickRollRerollCap == sanitized) return;
+  g_nickRollRerollCap = sanitized;
   save();
 }
 

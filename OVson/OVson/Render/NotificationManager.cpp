@@ -7,6 +7,9 @@
 #include "RenderUtils.h"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <string>
+#include <vector>
 #include <Windows.h>
 #include <gl/GL.h>
 
@@ -106,6 +109,84 @@ static float easeInCubic(float x) {
   return x * x * x;
 }
 
+
+namespace {
+// A notification used to draw its body on one line and let it run off the
+// card. The scorer's rejection reasons ("first name and surname: amy dunn")
+// are routinely wider than 460px, so the end of the explanation simply was not
+// there. Wrap instead: pack segments onto lines, splitting a segment on spaces
+// when it does not fit, and give the card the height it needs.
+constexpr float kBodyMaxWidth = 420.0f;
+constexpr std::size_t kMaxBodyLines = 3;
+constexpr float kLineHeight = 14.0f;
+
+using Line = std::vector<Render::NotificationSegment>;
+
+void pushPiece(std::vector<Line> &lines, Line &current, float &width,
+               const std::string &text, DWORD color, float pieceWidth) {
+  if (text.empty()) return;
+  // A single run with no space in it that is wider than the card on its own --
+  // it cannot be wrapped, so it is cut. Nothing the scorer produces is this
+  // long, but a page could hand us anything and running off the card is the
+  // bug being fixed here.
+  if (pieceWidth > kBodyMaxWidth) {
+    const float perChar = pieceWidth / static_cast<float>(text.size());
+    const std::size_t fits =
+        perChar > 0.0f ? static_cast<std::size_t>(kBodyMaxWidth / perChar) : text.size();
+    if (fits > 0 && fits < text.size()) {
+      pushPiece(lines, current, width, text.substr(0, fits), color, fits * perChar);
+      pushPiece(lines, current, width, text.substr(fits), color,
+                pieceWidth - fits * perChar);
+      return;
+    }
+  }
+  if (!current.empty() && width + pieceWidth > kBodyMaxWidth) {
+    lines.push_back(current);
+    current.clear();
+    width = 0.0f;
+  }
+  // Merge with the previous piece when it is the same colour, so a wrapped
+  // sentence does not turn into a hundred one-word draw calls.
+  if (!current.empty() && current.back().color == color)
+    current.back().text += text;
+  else
+    current.push_back(Render::NotificationSegment{text, color});
+  width += pieceWidth;
+}
+
+std::vector<Line> wrapSegments(const std::vector<Render::NotificationSegment> &segments) {
+  std::vector<Line> lines;
+  Line current;
+  float width = 0.0f;
+
+  for (const auto &segment : segments) {
+    const float whole = g_notifyFont.getStringWidth(segment.text);
+    if (width + whole <= kBodyMaxWidth || segment.text.find(' ') == std::string::npos) {
+      pushPiece(lines, current, width, segment.text, segment.color, whole);
+      continue;
+    }
+    // Too wide and it has spaces to break on.
+    std::size_t start = 0;
+    while (start < segment.text.size()) {
+      std::size_t space = segment.text.find(' ', start);
+      const std::size_t end = space == std::string::npos ? segment.text.size() : space + 1;
+      const std::string word = segment.text.substr(start, end - start);
+      pushPiece(lines, current, width, word, segment.color,
+                g_notifyFont.getStringWidth(word));
+      start = end;
+    }
+  }
+  if (!current.empty()) lines.push_back(current);
+  if (lines.empty()) lines.push_back(Line{});
+
+  if (lines.size() > kMaxBodyLines) {
+    lines.resize(kMaxBodyLines);
+    if (!lines.back().empty()) lines.back().back().text += "...";
+  }
+  return lines;
+}
+} // namespace
+
 void NotificationManager::render(HDC hdc) {
   std::lock_guard<std::mutex> lock(m_mutex);
   if (m_notifications.empty())
@@ -167,24 +248,31 @@ void NotificationManager::render(HDC hdc) {
   glLoadIdentity();
 
   const float padding   = 22.0f;
-  const float notifH    = 62.0f;
+  const float notifBaseH = 62.0f;
   const float radius    = 12.0f;
   const float textPadL  = 18.0f;   // text starts this far in from left
   const float gap       = 10.0f;
   const float revealDur = 0.35f;
   const float hideDur   = 0.30f;
 
-  float yPos = sh - notifH - padding;
+  float yPos = sh - padding;
 
   for (auto it = m_notifications.begin(); it != m_notifications.end();) {
     float titleW = g_notifyFont.getStringWidth(it->title);
+    const std::vector<Render::NotificationSegment> body =
+        it->segments.empty()
+            ? std::vector<Render::NotificationSegment>{{it->message, 0xFFC8C8D0}}
+            : it->segments;
+    const std::vector<Line> bodyLines = wrapSegments(body);
     float msgW = 0.0f;
-    if (it->segments.empty()) {
-      msgW = g_notifyFont.getStringWidth(it->message);
-    } else {
-      for (const auto &segment : it->segments)
-        msgW += g_notifyFont.getStringWidth(segment.text);
+    for (const auto &line : bodyLines) {
+      float lineW = 0.0f;
+      for (const auto &segment : line)
+        lineW += g_notifyFont.getStringWidth(segment.text);
+      if (lineW > msgW) msgW = lineW;
     }
+    const float notifH =
+        notifBaseH + static_cast<float>(bodyLines.size() - 1) * kLineHeight;
     float maxContentW = (titleW > msgW) ? titleW : msgW;
     float notifW = textPadL + maxContentW + 22.0f;
     if (notifW < 280.0f) notifW = 280.0f;
@@ -216,6 +304,7 @@ void NotificationManager::render(HDC hdc) {
 
     const float restX = sw - notifW - padding;
     float x = restX + (1.0f - slide) * 40.0f;
+    yPos -= notifH;
     float y = yPos;
 
     float drawW = notifW * scale;
@@ -265,21 +354,20 @@ void NotificationManager::render(HDC hdc) {
     glEnable(GL_TEXTURE_2D);
     g_notifyFont.drawString(textX + 8.0f, drawY + 13.0f, it->title,
                             applyAlpha(accent, alpha));
-    if (it->segments.empty()) {
-      g_notifyFont.drawString(textX, drawY + 33.0f, it->message,
-                              applyAlpha(0xFFC8C8D0, alpha));
-    } else {
+    float lineY = drawY + 33.0f;
+    for (const auto &line : bodyLines) {
       float segmentX = textX;
-      for (const auto &segment : it->segments) {
-        g_notifyFont.drawString(segmentX, drawY + 33.0f, segment.text,
+      for (const auto &segment : line) {
+        g_notifyFont.drawString(segmentX, lineY, segment.text,
                                 applyAlpha(segment.color, alpha));
         segmentX += g_notifyFont.getStringWidth(segment.text);
       }
+      lineY += kLineHeight;
     }
 
     glDisable(GL_TEXTURE_2D);
 
-    yPos -= (notifH + gap);
+    yPos -= gap;
     ++it;
   }
 
