@@ -521,26 +521,6 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     return 0;
   }
 
-  HRSRC resSlint = FindResourceW(nullptr, MAKEINTRESOURCEW(2), RT_RCDATA);
-  if (resSlint) {
-    HGLOBAL hSlint = LoadResource(nullptr, resSlint);
-    DWORD szSlint = SizeofResource(nullptr, resSlint);
-    void* dataSlint = LockResource(hSlint);
-    if (dataSlint && szSlint > 0) {
-      wchar_t tempPath[MAX_PATH];
-      GetTempPathW(MAX_PATH, tempPath);
-      std::wstring dllPath = std::wstring(tempPath) + L"slint_cpp.dll";
-      HANDLE hFile = CreateFileW(dllPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-      if (hFile != INVALID_HANDLE_VALUE) {
-        DWORD written = 0;
-        WriteFile(hFile, dataSlint, szSlint, &written, nullptr);
-        CloseHandle(hFile);
-      }
-      LoadLibraryW(dllPath.c_str());
-    }
-  }
-
-
   auto &dll = embeddedDllBytes();
   bool payloadOk = !dll.empty();
 
