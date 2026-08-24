@@ -30,6 +30,16 @@ BookPage parsePageJson(const std::string &json);
 // Minecraft account name rules: 3-16 of [A-Za-z0-9_].
 bool isValidUsername(const std::string &value);
 
+// Case-insensitive substring match used by target-word rerolling. An empty
+// target never matches; an exact match is naturally included.
+bool nicknameMatchesTargetWord(const std::string &nickname,
+                               const std::string &targetWord);
+
+// A non-empty target replaces (rather than supplements) the score threshold
+// as the auto-reroll stop rule.
+bool shouldStopReroll(bool scorePasses, const std::string &nickname,
+                      const std::string &targetWord);
+
 // True when this page is the one offering a generated name.
 bool isGeneratedNamePage(const BookPage &page);
 

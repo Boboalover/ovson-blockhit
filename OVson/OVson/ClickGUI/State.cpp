@@ -28,6 +28,7 @@ std::string s_seraphKeyInput;
 std::string s_auroraApiKeyInput;
 std::string s_prefixInput = ".";
 std::string s_muteTagPlayerInput;
+std::string s_nickRollTargetInput;
 
 bool s_typingSearch = false;
 bool s_typingApiKey = false;
@@ -37,6 +38,7 @@ bool s_typingSeraphKey = false;
 bool s_typingAuroraApiKey = false;
 bool s_typingPrefix = false;
 bool s_typingMuteTagPlayer = false;
+bool s_typingNickRollTarget = false;
 
 float s_scrollOffset = 0.0f;
 float s_targetScroll = 0.0f;

@@ -103,6 +103,8 @@ void setBlockHitSoundVolume(float volumePercent);
 // fixed; only the pass line and notification behavior are user-configurable.
 int getNickScoreThreshold();
 void setNickScoreThreshold(int threshold);
+bool isNickRollEnabled();
+void setNickRollEnabled(bool enabled);
 bool isNickScorePingEnabled();
 void setNickScorePingEnabled(bool enabled);
 bool isNickScoreAlertEveryEnabled();
@@ -115,6 +117,8 @@ int getNickRollRerollDelayMs();
 void setNickRollRerollDelayMs(int milliseconds);
 int getNickRollRerollCap();
 void setNickRollRerollCap(int cap);
+const std::string &getNickRollTargetWord();
+void setNickRollTargetWord(const std::string &targetWord);
 
 // click gui settings
 int getClickGuiKey();

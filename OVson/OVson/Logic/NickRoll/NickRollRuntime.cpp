@@ -235,38 +235,54 @@ DWORD verdictColor(const NickScore &result) {
   return 0xFF00FF55;
 }
 
-void announceScore(const NickScore &result) {
-  if (Config::isNickScoreAlertEveryEnabled() || result.passes) {
+void announceScore(const NickScore &result, bool stopConditionMet,
+                   const std::string &targetWord, bool targetMatched) {
+  if (Config::isNickScoreAlertEveryEnabled() || stopConditionMet) {
     const DWORD resultColor = verdictColor(result);
-    const std::vector<Render::NotificationSegment> segments = {
+    std::vector<Render::NotificationSegment> segments = {
         {result.nickname, 0xFFFFFFFF},
         {" · ", 0xFF909096},
         {result.verdict, resultColor},
         {" · ", 0xFF909096},
         {result.summary, 0xFFE0E0E0},
     };
+    if (targetMatched) {
+      segments.push_back({" · target: ", 0xFF909096});
+      segments.push_back({targetWord, 0xFF00FF55});
+    }
     Render::NotificationManager::getInstance()->addRich(
-        "NICK SCORE " + std::to_string(result.score), segments,
-        notificationType(result), 4.0F, 8);
+        targetMatched ? "NICK TARGET FOUND"
+                      : "NICK SCORE " + std::to_string(result.score),
+        segments,
+        targetMatched ? Render::NotificationType::Success
+                      : notificationType(result),
+        4.0F, 8);
   }
 
-  // Reuse the existing asynchronous audio request path. A rejected roll never
-  // queues sound, regardless of whether it was configured to show an alert.
-  if (result.passes && Config::isNickScorePingEnabled())
+  // In score mode a pass pings; in target mode only the requested word pings.
+  if (stopConditionMet && Config::isNickScorePingEnabled())
     BlockHitSound::requestPreview();
 }
 
-// Queues TRY AGAIN for a name that missed the threshold. Returns false and
-// says why when it will not, so a silent no-op is never mistaken for the
-// feature being off.
-void maybeQueueReroll(const BookPage &page, const NickScore &result) {
+// Queues TRY AGAIN until the active stop rule is met. With an empty target the
+// original score threshold remains the rule; a target switches the rule to a
+// case-insensitive nickname substring match.
+void maybeQueueReroll(const BookPage &page, const NickScore &result,
+                      bool stopConditionMet, const std::string &targetWord) {
   if (!Config::isNickRollAutoRerollEnabled())
     return;
-  if (result.passes) {
+  if (stopConditionMet) {
     // Stopping is the entire purpose. Say so once so the log shows the run
     // ending on a decision rather than just going quiet.
-    Logger::info("[NickRoll] stopping on '%s' (score %d >= %d) after %d reroll(s)",
-                 result.nickname.c_str(), result.score, result.threshold, g_rerolls);
+    if (targetWord.empty()) {
+      Logger::info(
+          "[NickRoll] stopping on '%s' (score %d >= %d) after %d reroll(s)",
+          result.nickname.c_str(), result.score, result.threshold, g_rerolls);
+    } else {
+      Logger::info(
+          "[NickRoll] stopping on '%s' (contains target '%s') after %d reroll(s)",
+          result.nickname.c_str(), targetWord.c_str(), g_rerolls);
+    }
     return;
   }
   if (!gameHasFocus()) {
@@ -340,18 +356,31 @@ void handlePage(const std::string &json) {
   }
 
   const NickScore result = scoreNickname(name, Config::getNickScoreThreshold());
+  const std::string targetWord = Config::getNickRollTargetWord();
+  const bool targetMatched = nicknameMatchesTargetWord(name, targetWord);
+  const bool stopConditionMet =
+      shouldStopReroll(result.passes, name, targetWord);
   Logger::info("[NickRoll] '%s' score=%d tell=%d appeal=%d threshold=%d "
-               "passes=%s pattern=%s",
+               "passes=%s target='%s' targetMatch=%s pattern=%s",
                name.c_str(), result.score, result.tell, result.appeal,
                result.threshold, result.passes ? "yes" : "no",
+               targetWord.c_str(), targetMatched ? "yes" : "no",
                result.pattern.c_str());
-  announceScore(result);
-  maybeQueueReroll(page, result);
+  announceScore(result, stopConditionMet, targetWord, targetMatched);
+  maybeQueueReroll(page, result, stopConditionMet, targetWord);
 }
 
 } // namespace
 
 void tick() {
+  if (!Config::isNickRollEnabled()) {
+    resetBookState("module disabled");
+    g_rerolls = 0;
+    g_bookClosedAt = 0;
+    g_capReported = false;
+    return;
+  }
+
   if (!lc)
     return;
 

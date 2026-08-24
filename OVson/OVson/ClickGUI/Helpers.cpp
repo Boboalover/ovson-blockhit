@@ -16,6 +16,8 @@ static inline float colorA(DWORD c) {
   return ((c >> 24) & 0xFF) / 255.0f;
 }
 
+static int s_activeSliderId = -1;
+
 void setMouseGrabbed(bool grabbed) {
   JNIEnv *env = lc->getEnv();
   if (!env)
@@ -144,8 +146,20 @@ void drawSwitch(int id, float x, float y, bool enabled, bool hovered,
 bool drawSlider(int id, float x, float y, float w, float h, float &val, float minVal, float maxVal, float mx, float my, bool lClick, float alpha) {
   bool interacting = false;
   float knobR = h / 2.0f;
-  
-  if (lClick && mx >= x - knobR && mx <= x + w + knobR && my >= y - knobR && my <= y + h + knobR) {
+
+  // Capture the slider on mouse-down and keep it captured until release. The
+  // old implementation required the pointer to remain inside an ~16px strip,
+  // which made a small vertical wobble interrupt dragging.
+  const float hitPadX = knobR + 3.0f;
+  const float hitPadY = knobR + 5.0f;
+  const bool hovered = mx >= x - hitPadX && mx <= x + w + hitPadX &&
+                       my >= y - hitPadY && my <= y + h + hitPadY;
+  if (!lClick)
+    s_activeSliderId = -1;
+  else if (s_activeSliderId < 0 && hovered)
+    s_activeSliderId = id;
+
+  if (lClick && s_activeSliderId == id) {
     interacting = true;
     float pct = (mx - x) / w;
     if (pct < 0.0f) pct = 0.0f;

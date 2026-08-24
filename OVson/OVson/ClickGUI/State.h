@@ -38,6 +38,7 @@ extern std::string s_seraphKeyInput;
 extern std::string s_auroraApiKeyInput;
 extern std::string s_prefixInput;
 extern std::string s_muteTagPlayerInput;
+extern std::string s_nickRollTargetInput;
 
 extern bool s_typingSearch;
 extern bool s_typingApiKey;
@@ -47,6 +48,7 @@ extern bool s_typingSeraphKey;
 extern bool s_typingAuroraApiKey;
 extern bool s_typingPrefix;
 extern bool s_typingMuteTagPlayer;
+extern bool s_typingNickRollTarget;
 
 extern float s_scrollOffset;
 extern float s_targetScroll;

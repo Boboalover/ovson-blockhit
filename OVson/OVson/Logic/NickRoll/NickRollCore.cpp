@@ -329,6 +329,20 @@ bool isValidUsername(const std::string &value) {
   return true;
 }
 
+bool nicknameMatchesTargetWord(const std::string &nickname,
+                               const std::string &targetWord) {
+  if (targetWord.empty())
+    return false;
+  return toLower(nickname).find(toLower(targetWord)) != std::string::npos;
+}
+
+bool shouldStopReroll(bool scorePasses, const std::string &nickname,
+                      const std::string &targetWord) {
+  return targetWord.empty()
+             ? scorePasses
+             : nicknameMatchesTargetWord(nickname, targetWord);
+}
+
 bool isGeneratedNamePage(const BookPage &page) {
   return page.parsed &&
          toLower(page.plainText).find(kAnchor) != std::string::npos;

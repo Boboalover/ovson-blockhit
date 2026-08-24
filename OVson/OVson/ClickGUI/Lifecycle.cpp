@@ -52,10 +52,16 @@ void ClickGUI::setOpen(bool open) {
     s_urchinKeyInput = Config::getUrchinApiKey();
     s_seraphKeyInput = Config::getSeraphApiKey();
     s_auroraApiKeyInput = Config::getAuroraApiKey();
+    s_nickRollTargetInput = Config::getNickRollTargetWord();
     ShowCursor(TRUE);
     setMouseGrabbed(false);
     FocusFix::setIngameFocus(false);
   } else {
+    if (s_typingNickRollTarget) {
+      Config::setNickRollTargetWord(s_nickRollTargetInput);
+      s_nickRollTargetInput = Config::getNickRollTargetWord();
+      s_typingNickRollTarget = false;
+    }
     FocusFix::setIngameFocus(true);
     if (isIngame() && !BetterTab::isResizeMode()) {
       ShowCursor(FALSE);

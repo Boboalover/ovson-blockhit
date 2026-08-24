@@ -91,6 +91,27 @@ void usernameRulesMatchMinecraft() {
   require(!isValidUsername(""), "the empty string is not a username");
 }
 
+void targetWordMatching() {
+  require(nicknameMatchesTargetWord("OfficialGod", "god"),
+          "target matching must be case-insensitive");
+  require(nicknameMatchesTargetWord("God", "god"),
+          "an exact target must match");
+  require(nicknameMatchesTargetWord("x_GOD_x", "God"),
+          "target matching must work inside a nickname");
+  require(!nicknameMatchesTargetWord("GoodPlayer", "god"),
+          "similar text must not count as a substring");
+  require(!nicknameMatchesTargetWord("AnyName", ""),
+          "an empty target must leave score mode active");
+  require(shouldStopReroll(true, "AnyName", ""),
+          "score mode must stop on a passing score");
+  require(!shouldStopReroll(false, "AnyName", ""),
+          "score mode must reroll a failing score");
+  require(!shouldStopReroll(true, "ExcellentName", "god"),
+          "a passing score must not bypass an active target");
+  require(shouldStopReroll(false, "OfficialGod", "god"),
+          "a target match must stop even when its score is low");
+}
+
 void formattingCodesAreStrippedFromPageText() {
   const BookPage page = parsePageJson(
       "{\"text\":\"We've generated a random username for you:\\n\\u00a7lBoldName99\\n\"}");
@@ -143,6 +164,7 @@ int main() {
       {"other book pages do nothing", otherBookPagesProduceNothing},
       {"malformed json is refused", malformedJsonIsRefusedRatherThanSalvaged},
       {"username rules", usernameRulesMatchMinecraft},
+      {"target word matching", targetWordMatching},
       {"formatting codes stripped", formattingCodesAreStrippedFromPageText},
       {"reroll command read from page", theRerollCommandIsReadFromThePage},
       {"non run_command button refused", aButtonThatIsNotRunCommandIsRefused},

@@ -20,6 +20,52 @@ namespace Render {
 
 using namespace ClickGUIState;
 
+namespace {
+
+bool hasActiveNativeInput() {
+  return s_typingSearch || s_typingApiKey || s_typingAutoGG ||
+         s_typingUrchinKey || s_typingSeraphKey ||
+         s_typingAuroraApiKey || s_typingPrefix ||
+         s_typingMuteTagPlayer || s_typingNickRollTarget;
+}
+
+std::string *activeNativeInput(int &cap) {
+  cap = 48;
+  if (s_typingSearch) return &s_playerSearch;
+  if (s_typingApiKey) return &s_apiKeyInput;
+  if (s_typingAutoGG) {
+    cap = 100;
+    return &s_autoGGInput;
+  }
+  if (s_typingUrchinKey) {
+    cap = 100;
+    return &s_urchinKeyInput;
+  }
+  if (s_typingSeraphKey) {
+    cap = 100;
+    return &s_seraphKeyInput;
+  }
+  if (s_typingAuroraApiKey) {
+    cap = 100;
+    return &s_auroraApiKeyInput;
+  }
+  if (s_typingPrefix) {
+    cap = 1;
+    return &s_prefixInput;
+  }
+  if (s_typingMuteTagPlayer) {
+    cap = 16;
+    return &s_muteTagPlayerInput;
+  }
+  if (s_typingNickRollTarget) {
+    cap = 16;
+    return &s_nickRollTargetInput;
+  }
+  return nullptr;
+}
+
+} // namespace
+
 void ClickGUI::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
   if (!s_open)
     return;
@@ -57,9 +103,7 @@ void ClickGUI::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         if (activeJavaSetting) break;
       }
 
-      if (activeJavaSetting || s_typingSearch || s_typingApiKey || s_typingAutoGG ||
-          s_typingUrchinKey || s_typingSeraphKey || s_typingAuroraApiKey ||
-          s_typingPrefix || s_typingMuteTagPlayer) {
+      if (activeJavaSetting || hasActiveNativeInput()) {
         if (OpenClipboard(NULL)) {
           HANDLE hData = GetClipboardData(CF_TEXT);
           if (hData) {
@@ -77,29 +121,11 @@ void ClickGUI::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
                 target = &activeJavaSetting->inputBuf;
                 cap = 100;
               } else {
-                target =
-                s_typingSearch
-                    ? &s_playerSearch
-                    : (s_typingApiKey
-                           ? &s_apiKeyInput
-                           : (s_typingAutoGG
-                                  ? &s_autoGGInput
-                                  : (s_typingUrchinKey
-                                         ? &s_urchinKeyInput
-                                         : (s_typingSeraphKey
-                                                ? &s_seraphKeyInput
-                                                : (s_typingAuroraApiKey
-                                                       ? &s_auroraApiKeyInput
-                                                       : (s_typingPrefix
-                                                              ? &s_prefixInput
-                                                              : &s_muteTagPlayerInput))))));
-                cap = (s_typingAutoGG || s_typingUrchinKey ||
-                       s_typingSeraphKey || s_typingAuroraApiKey)
-                          ? 100
-                          : (s_typingPrefix ? 1 : (s_typingMuteTagPlayer ? 16 : 48));
+                target = activeNativeInput(cap);
               }
 
-              if (target && target->length() + filtered.length() < cap) {
+              if (target && target->length() + filtered.length() <=
+                                static_cast<std::size_t>(cap)) {
                 *target += filtered;
                 NotificationManager::getInstance()->add(
                     "Input", "Pasted from clipboard", NotificationType::Info);
@@ -130,9 +156,7 @@ void ClickGUI::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
       if (activeJavaSetting) break;
     }
 
-    if (activeJavaSetting || s_typingSearch || s_typingApiKey || s_typingAutoGG ||
-        s_typingUrchinKey || s_typingSeraphKey || s_typingAuroraApiKey ||
-        s_typingPrefix || s_typingMuteTagPlayer) {
+    if (activeJavaSetting || hasActiveNativeInput()) {
       
       std::string *target = nullptr;
       int cap = 100;
@@ -141,26 +165,7 @@ void ClickGUI::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         target = &activeJavaSetting->inputBuf;
         cap = 100;
       } else {
-        target =
-        s_typingSearch
-            ? &s_playerSearch
-            : (s_typingApiKey
-                   ? &s_apiKeyInput
-                   : (s_typingAutoGG
-                          ? &s_autoGGInput
-                          : (s_typingUrchinKey
-                                 ? &s_urchinKeyInput
-                                 : (s_typingSeraphKey
-                                        ? &s_seraphKeyInput
-                                        : (s_typingAuroraApiKey
-                                               ? &s_auroraApiKeyInput
-                                               : (s_typingPrefix
-                                                      ? &s_prefixInput
-                                                      : &s_muteTagPlayerInput))))));
-        cap = (s_typingAutoGG || s_typingUrchinKey || s_typingSeraphKey ||
-               s_typingAuroraApiKey)
-                  ? 100
-                  : (s_typingPrefix ? 1 : (s_typingMuteTagPlayer ? 16 : 48));
+        target = activeNativeInput(cap);
       }
 
       if (c == 8) {
@@ -353,6 +358,17 @@ void ClickGUI::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
                                                   NotificationType::Success);
           s_muteTagPlayerInput.clear();
           s_typingMuteTagPlayer = false;
+        }
+        if (s_typingNickRollTarget) {
+          Config::setNickRollTargetWord(s_nickRollTargetInput);
+          s_nickRollTargetInput = Config::getNickRollTargetWord();
+          NotificationManager::getInstance()->add(
+              "Nick Roll",
+              s_nickRollTargetInput.empty()
+                  ? "Target cleared; using score threshold"
+                  : "Target saved: " + s_nickRollTargetInput,
+              NotificationType::Success);
+          s_typingNickRollTarget = false;
         }
       }
     } else if (c >= 32 && c <= 126) {

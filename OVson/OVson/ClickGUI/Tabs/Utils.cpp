@@ -166,7 +166,8 @@ void renderUtils(TabCtx &ctx) {
   cy += 110;
 
   drawSectionLabel(cx, cy, "Nick Score Alerts", alpha);
-  const float nickScoreCardH = 298.0f;
+  const bool nickRollEnabled = Config::isNickRollEnabled();
+  const float nickScoreCardH = nickRollEnabled ? 338.0f : 60.0f;
   const bool hNickScore =
       isHovered(mx, my, mainX + 190, cy + 30, g_w - 210, nickScoreCardH);
   glDisable(GL_TEXTURE_2D);
@@ -178,8 +179,38 @@ void renderUtils(TabCtx &ctx) {
                        applyAlpha(0xFFFFFFFF, alpha));
   g_guiFont.drawString(
       cx, cy + 58,
-      "Reads the open book, scores the name, stops when one passes",
+      "Stops on the target word, or score when the target is empty",
       applyAlpha(0xFFA0A0A5, alpha), 0.43f);
+
+  const float nickScoreSwX = mainX + g_w - 65;
+  const bool hNickMaster =
+      hNickScore && my >= cy + 34.0f && my < cy + 76.0f;
+  glDisable(GL_TEXTURE_2D);
+  drawSwitch(69, nickScoreSwX, cy + 40, nickRollEnabled, hNickMaster, alpha);
+  glEnable(GL_TEXTURE_2D);
+  if (clickEvent && hNickMaster) {
+    if (nickRollEnabled && s_typingNickRollTarget) {
+      Config::setNickRollTargetWord(s_nickRollTargetInput);
+      s_nickRollTargetInput = Config::getNickRollTargetWord();
+      s_typingNickRollTarget = false;
+    }
+    Config::setNickRollEnabled(!nickRollEnabled);
+    NotificationManager::getInstance()->add(
+        "Nick Score",
+        !nickRollEnabled ? "Nick scoring enabled" : "Nick scoring disabled",
+        !nickRollEnabled ? NotificationType::Success
+                         : NotificationType::Warning);
+  }
+
+  if (nickRollEnabled) {
+
+  // Keep a dedicated value column to the right of every slider. Previously
+  // the track ended underneath the number, so values such as "5000ms" and the
+  // knob could draw over one another.
+  const float nickValueRight = mainX + g_w - 38.0f;
+  const float nickSliderX = cx + 100.0f;
+  const float nickSliderRight = mainX + g_w - 92.0f;
+  const float nickSliderW = nickSliderRight - nickSliderX;
 
   float nickThreshold =
       static_cast<float>(Config::getNickScoreThreshold());
@@ -190,20 +221,19 @@ void renderUtils(TabCtx &ctx) {
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
   const float thresholdTextWidth =
       g_guiFont.getStringWidth(thresholdText) * (0.42f / 0.5f);
-  g_guiFont.drawString(mainX + g_w - 38.0f - thresholdTextWidth, cy + 88,
+  g_guiFont.drawString(nickValueRight - thresholdTextWidth, cy + 88,
                        thresholdText, applyAlpha(accent(), alpha), 0.42f);
-  if (drawSlider(3070, cx + 82.0f, cy + 96.0f, g_w - 328.0f, 8.0f,
+  if (drawSlider(3070, nickSliderX, cy + 96.0f, nickSliderW, 8.0f,
                  nickThreshold, 0.0f, 100.0f, mx, my,
-                 lClick && hNickScore, alpha)) {
+                 lClick, alpha)) {
     Config::setNickScoreThreshold(
         static_cast<int>(std::lround(nickThreshold)));
   }
 
-  const float nickScoreSwX = mainX + g_w - 65;
   const bool nickPing = Config::isNickScorePingEnabled();
   const bool hNickPing =
       hNickScore && my >= cy + 112.0f && my < cy + 148.0f;
-  g_guiFont.drawString(cx + 10, cy + 124, "Ping when a name passes",
+  g_guiFont.drawString(cx + 10, cy + 124, "Ping when target/pass is found",
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
   glDisable(GL_TEXTURE_2D);
   drawSwitch(70, nickScoreSwX, cy + 121, nickPing, hNickPing, alpha);
@@ -222,26 +252,64 @@ void renderUtils(TabCtx &ctx) {
   const bool autoReroll = Config::isNickRollAutoRerollEnabled();
   const bool hAutoReroll =
       hNickScore && my >= cy + 184.0f && my < cy + 220.0f;
-  g_guiFont.drawString(cx + 10, cy + 196, "Auto TRY AGAIN until one passes",
+  g_guiFont.drawString(cx + 10, cy + 196, "Auto TRY AGAIN until target/pass",
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
   glDisable(GL_TEXTURE_2D);
   drawSwitch(72, nickScoreSwX, cy + 193, autoReroll, hAutoReroll, alpha);
   glEnable(GL_TEXTURE_2D);
+
+  const float targetBoxX = cx + 100.0f;
+  const float targetBoxY = cy + 220.0f;
+  const float targetBoxW = nickValueRight - targetBoxX;
+  const float targetBoxH = 30.0f;
+  const bool hTargetWord = isHovered(mx, my, targetBoxX, targetBoxY,
+                                     targetBoxW, targetBoxH);
+  g_guiFont.drawString(cx + 10, cy + 229, "Target word",
+                       applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+  glDisable(GL_TEXTURE_2D);
+  drawTextInput(targetBoxX, targetBoxY, targetBoxW, targetBoxH,
+                s_typingNickRollTarget, hTargetWord, alpha);
+  glEnable(GL_TEXTURE_2D);
+  std::string targetDisplay = s_nickRollTargetInput;
+  if (targetDisplay.empty() && !s_typingNickRollTarget)
+    targetDisplay = "empty = score mode";
+  if (s_typingNickRollTarget && (GetTickCount64() / 500) % 2 == 0)
+    targetDisplay += "|";
+  g_guiFont.drawString(targetBoxX + 9.0f, targetBoxY + 7.0f,
+                       targetDisplay.c_str(),
+                       applyAlpha(s_nickRollTargetInput.empty() &&
+                                          !s_typingNickRollTarget
+                                      ? textSecondary()
+                                      : textPrimary(),
+                                  alpha),
+                       0.40f);
+
+  if (clickEvent && hTargetWord) {
+    s_typingNickRollTarget = true;
+    s_typingSearch = s_typingApiKey = s_typingAutoGG = false;
+    s_typingUrchinKey = s_typingSeraphKey = false;
+    s_typingAuroraApiKey = s_typingPrefix = false;
+    s_typingMuteTagPlayer = false;
+  } else if (clickEvent && s_typingNickRollTarget) {
+    Config::setNickRollTargetWord(s_nickRollTargetInput);
+    s_nickRollTargetInput = Config::getNickRollTargetWord();
+    s_typingNickRollTarget = false;
+  }
 
   float rerollDelay =
       static_cast<float>(Config::getNickRollRerollDelayMs());
   char delayText[16]{};
   snprintf(delayText, sizeof(delayText), "%dms",
            static_cast<int>(rerollDelay));
-  g_guiFont.drawString(cx + 10, cy + 228, "Delay",
+  g_guiFont.drawString(cx + 10, cy + 268, "Delay",
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
   const float delayTextWidth =
       g_guiFont.getStringWidth(delayText) * (0.42f / 0.5f);
-  g_guiFont.drawString(mainX + g_w - 38.0f - delayTextWidth, cy + 228,
+  g_guiFont.drawString(nickValueRight - delayTextWidth, cy + 268,
                        delayText, applyAlpha(accent(), alpha), 0.42f);
-  if (drawSlider(3071, cx + 82.0f, cy + 236.0f, g_w - 328.0f, 8.0f,
+  if (drawSlider(3071, nickSliderX, cy + 276.0f, nickSliderW, 8.0f,
                  rerollDelay, 250.0f, 5000.0f, mx, my,
-                 lClick && hNickScore, alpha)) {
+                 lClick, alpha)) {
     Config::setNickRollRerollDelayMs(
         static_cast<int>(std::lround(rerollDelay)));
   }
@@ -249,14 +317,14 @@ void renderUtils(TabCtx &ctx) {
   float rerollCap = static_cast<float>(Config::getNickRollRerollCap());
   char capText[16]{};
   snprintf(capText, sizeof(capText), "%d", static_cast<int>(rerollCap));
-  g_guiFont.drawString(cx + 10, cy + 262, "Max rerolls",
+  g_guiFont.drawString(cx + 10, cy + 302, "Max rerolls",
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
   const float capTextWidth =
       g_guiFont.getStringWidth(capText) * (0.42f / 0.5f);
-  g_guiFont.drawString(mainX + g_w - 38.0f - capTextWidth, cy + 262, capText,
+  g_guiFont.drawString(nickValueRight - capTextWidth, cy + 302, capText,
                        applyAlpha(accent(), alpha), 0.42f);
-  if (drawSlider(3072, cx + 82.0f, cy + 270.0f, g_w - 328.0f, 8.0f, rerollCap,
-                 10.0f, 2000.0f, mx, my, lClick && hNickScore, alpha)) {
+  if (drawSlider(3072, nickSliderX, cy + 310.0f, nickSliderW, 8.0f, rerollCap,
+                 10.0f, 2000.0f, mx, my, lClick, alpha)) {
     Config::setNickRollRerollCap(static_cast<int>(std::lround(rerollCap)));
   }
 
@@ -266,10 +334,12 @@ void renderUtils(TabCtx &ctx) {
     Config::setNickScoreAlertEveryEnabled(!alertEvery);
   else if (clickEvent && hAutoReroll)
     Config::setNickRollAutoRerollEnabled(!autoReroll);
-  cy += 348;
+  }
+  cy += nickRollEnabled ? 388.0f : 110.0f;
 
   drawSectionLabel(cx, cy, "Block-Hit Sound (Client Heuristic)", alpha);
-  const float blockSoundCardH = 276.0f;
+  const bool blockSoundEnabled = Config::isBlockHitSoundEnabled();
+  const float blockSoundCardH = blockSoundEnabled ? 276.0f : 60.0f;
   bool hBlockSound =
       isHovered(mx, my, mainX + 190, cy + 30, g_w - 210, blockSoundCardH);
   glDisable(GL_TEXTURE_2D);
@@ -285,12 +355,23 @@ void renderUtils(TabCtx &ctx) {
       applyAlpha(0xFFA0A0A5, alpha), 0.43f);
 
   const float blockSoundSwX = mainX + g_w - 65;
-  bool blockSoundEnabled = Config::isBlockHitSoundEnabled();
   bool hBlockSoundMaster = hBlockSound && my >= cy + 34 && my < cy + 76;
   glDisable(GL_TEXTURE_2D);
   drawSwitch(60, blockSoundSwX, cy + 40, blockSoundEnabled,
              hBlockSoundMaster, alpha);
   glEnable(GL_TEXTURE_2D);
+
+  if (clickEvent && hBlockSoundMaster) {
+    Config::setBlockHitSoundEnabled(!blockSoundEnabled);
+    NotificationManager::getInstance()->add(
+        "Utils",
+        !blockSoundEnabled ? "Heuristic Block-Hit Sound Enabled"
+                           : "Heuristic Block-Hit Sound Disabled",
+        !blockSoundEnabled ? NotificationType::Success
+                           : NotificationType::Warning);
+  }
+
+  if (blockSoundEnabled) {
 
   const std::string &source = Config::getBlockHitSoundSource();
   g_guiFont.drawString(cx + 10, cy + 88, "Sound source",
@@ -330,11 +411,15 @@ void renderUtils(TabCtx &ctx) {
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
   const float volumeTextWidth =
       g_guiFont.getStringWidth(volumeText) * (0.42f / 0.5f);
-  g_guiFont.drawString(mainX + g_w - 38.0f - volumeTextWidth, cy + 125,
+  const float blockValueRight = mainX + g_w - 38.0f;
+  const float blockSliderX = cx + 100.0f;
+  const float blockSliderRight = mainX + g_w - 92.0f;
+  g_guiFont.drawString(blockValueRight - volumeTextWidth, cy + 125,
                        volumeText, applyAlpha(accent(), alpha), 0.42f);
-  if (drawSlider(3060, cx + 76.0f, cy + 132.0f, g_w - 322.0f, 8.0f,
+  if (drawSlider(3060, blockSliderX, cy + 132.0f,
+                 blockSliderRight - blockSliderX, 8.0f,
                  blockSoundVolume, 0.0f, 100.0f, mx, my,
-                 lClick && hBlockSound, alpha)) {
+                 lClick, alpha)) {
     Config::setBlockHitSoundVolume(blockSoundVolume);
   }
 
@@ -391,18 +476,11 @@ void renderUtils(TabCtx &ctx) {
              hBlockSoundDebug && blockSoundEnabled, blockSoundDebugAlpha);
   glEnable(GL_TEXTURE_2D);
 
-  if (clickEvent && hBlockSoundMaster) {
-    Config::setBlockHitSoundEnabled(!blockSoundEnabled);
-    NotificationManager::getInstance()->add(
-        "Utils",
-        !blockSoundEnabled ? "Heuristic Block-Hit Sound Enabled"
-                           : "Heuristic Block-Hit Sound Disabled",
-        !blockSoundEnabled ? NotificationType::Success
-                           : NotificationType::Warning);
-  } else if (clickEvent && hBlockSoundDebug && blockSoundEnabled) {
+  if (clickEvent && hBlockSoundDebug) {
     Config::setBlockHitSoundDebugEnabled(!blockSoundDebug);
   }
-  cy += 326;
+  }
+  cy += blockSoundEnabled ? 326.0f : 110.0f;
 
   g_guiFont.drawString(cx, cy, "Replay Automations",
                        applyAlpha(0xFFFFFFFF, alpha));

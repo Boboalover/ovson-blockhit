@@ -160,6 +160,7 @@ static std::string g_blockHitSoundSource = "Default";
 static std::string g_blockHitSoundFilename = "block-hit.wav";
 static float g_blockHitSoundVolume = BlockHitAudio::kDefaultVolumePercent;
 static int g_nickScoreThreshold = 70;
+static bool g_nickRollEnabled = true;
 static bool g_nickScorePingEnabled = true;
 static bool g_nickScoreAlertEveryEnabled = true;
 static bool g_nickRollAutoRerollEnabled = false;
@@ -168,6 +169,7 @@ static bool g_nickRollAutoRerollEnabled = false;
 // same page twice and burns rerolls on a name it already scored.
 static int g_nickRollRerollDelayMs = 600;
 static int g_nickRollRerollCap = 300;
+static std::string g_nickRollTargetWord;
 static bool g_techEnabled = false;
 static bool g_anticheatEnabled = true;
 static bool g_anticheatNoSlowEnabled = true;
@@ -238,6 +240,21 @@ static bool parseJsonLine(const std::string &line, const char *key,
     return false;
   out = line.substr(q1 + 1, q2 - (q1 + 1));
   return true;
+}
+
+static std::string sanitizeNickRollTargetWord(const std::string &value) {
+  std::string sanitized;
+  sanitized.reserve(value.size() < 16U ? value.size() : 16U);
+  for (const char c : value) {
+    const bool allowed = (c >= 'A' && c <= 'Z') ||
+                         (c >= 'a' && c <= 'z') ||
+                         (c >= '0' && c <= '9') || c == '_';
+    if (allowed)
+      sanitized.push_back(c);
+    if (sanitized.size() == 16U)
+      break;
+  }
+  return sanitized;
 }
 
 static bool parseJsonInt(const std::string &all, const char *key, int &out) {
@@ -532,6 +549,8 @@ bool Config::initialize(HMODULE self) {
     g_nickScoreThreshold = 70;
   if (g_nickScoreThreshold < 0) g_nickScoreThreshold = 0;
   if (g_nickScoreThreshold > 100) g_nickScoreThreshold = 100;
+  if (!parseJsonBool(all, "nickRollEnabled", g_nickRollEnabled))
+    g_nickRollEnabled = true;
   if (!parseJsonBool(all, "nickScorePingEnabled", g_nickScorePingEnabled))
     g_nickScorePingEnabled = true;
   if (!parseJsonBool(all, "nickScoreAlertEveryEnabled",
@@ -550,6 +569,10 @@ bool Config::initialize(HMODULE self) {
     g_nickRollRerollCap = 300;
   if (g_nickRollRerollCap < 10) g_nickRollRerollCap = 10;
   if (g_nickRollRerollCap > 2000) g_nickRollRerollCap = 2000;
+  if (parseJsonLine(all, "nickRollTargetWord", val))
+    g_nickRollTargetWord = sanitizeNickRollTargetWord(val);
+  else
+    g_nickRollTargetWord.clear();
 
   if (g_discordAppId == "1335272304856010773") {
     g_discordAppId = "1467865675262329019";
@@ -785,11 +808,13 @@ static bool saveImpl() {
       "  \"blockHitSoundFilename\": \"%s\",\n"
       "  \"blockHitSoundVolume\": %.2f,\n"
       "  \"nickScoreThreshold\": %d,\n"
+      "  \"nickRollEnabled\": %s,\n"
       "  \"nickScorePingEnabled\": %s,\n"
       "  \"nickScoreAlertEveryEnabled\": %s,\n"
       "  \"nickRollAutoRerollEnabled\": %s,\n"
       "  \"nickRollRerollDelayMs\": %d,\n"
       "  \"nickRollRerollCap\": %d,\n"
+      "  \"nickRollTargetWord\": \"%s\",\n"
       "  \"sortMode\": \"%s\",\n"
       "  \"ovShowStar\": %s, \"ovShowFk\": %s, \"ovShowFkdr\": %s, "
       "\"ovShowWins\": %s, \"ovShowWlr\": %s, \"ovShowWs\": %s,\n"
@@ -870,10 +895,12 @@ static bool saveImpl() {
       g_blockHitSoundDebugEnabled ? "true" : "false",
       g_blockHitSoundSource.c_str(), g_blockHitSoundFilename.c_str(),
       g_blockHitSoundVolume,
-      g_nickScoreThreshold, g_nickScorePingEnabled ? "true" : "false",
+      g_nickScoreThreshold, g_nickRollEnabled ? "true" : "false",
+      g_nickScorePingEnabled ? "true" : "false",
       g_nickScoreAlertEveryEnabled ? "true" : "false",
       g_nickRollAutoRerollEnabled ? "true" : "false",
       g_nickRollRerollDelayMs, g_nickRollRerollCap,
+      g_nickRollTargetWord.c_str(),
       g_sortMode.c_str(),
       g_ovShowStar ? "true" : "false", g_ovShowFk ? "true" : "false",
       g_ovShowFkdr ? "true" : "false", g_ovShowWins ? "true" : "false",
@@ -1064,6 +1091,13 @@ void Config::setNickScoreThreshold(int threshold) {
   save();
 }
 
+bool Config::isNickRollEnabled() { return g_nickRollEnabled; }
+void Config::setNickRollEnabled(bool enabled) {
+  if (g_nickRollEnabled == enabled) return;
+  g_nickRollEnabled = enabled;
+  save();
+}
+
 bool Config::isNickScorePingEnabled() { return g_nickScorePingEnabled; }
 void Config::setNickScorePingEnabled(bool enabled) {
   if (g_nickScorePingEnabled == enabled) return;
@@ -1103,6 +1137,16 @@ void Config::setNickRollRerollCap(int cap) {
   const int sanitized = cap < 10 ? 10 : (cap > 2000 ? 2000 : cap);
   if (g_nickRollRerollCap == sanitized) return;
   g_nickRollRerollCap = sanitized;
+  save();
+}
+
+const std::string &Config::getNickRollTargetWord() {
+  return g_nickRollTargetWord;
+}
+void Config::setNickRollTargetWord(const std::string &targetWord) {
+  const std::string sanitized = sanitizeNickRollTargetWord(targetWord);
+  if (g_nickRollTargetWord == sanitized) return;
+  g_nickRollTargetWord = sanitized;
   save();
 }
 
