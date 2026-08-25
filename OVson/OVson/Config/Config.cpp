@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "../Java.h"
+#include "../Logic/BlockHitAudio.h"
 #include "../Render/NotificationManager.h"
 #include "../Utils/Logger.h"
 #include "StatColors.h"
@@ -53,6 +54,7 @@ static float g_nameTagHeight = 2.4f; // world-Y offset above feet
 
 static bool g_muteTagAlertsEnabled = false;
 static bool g_muteSelfTagAlertsEnabled = false;
+static bool g_muteTeamTagAlertsEnabled = false;
 static std::vector<std::string> g_mutedTagPlayers;
 
 static std::string serializeMutedTagPlayers() {
@@ -139,6 +141,7 @@ static bool g_chatBypasserEnabled = false;
 static std::string g_clickGuiTheme = "Solid";
 static std::string g_clickGuiLayout = "A";
 static std::string g_layoutBData = "";
+static std::string g_bedwarsSettingsData = "";
 static bool g_liquidGlassWiggle = true;
 static bool g_liquidGlassGlow = true;
 static float g_liquidGlassRefractStrength = 0.7f;
@@ -149,6 +152,27 @@ static bool g_discordRpcEnabled = true;
 static std::string g_discordAppId = "1467865675262329019";
 static bool g_nickedBypass = true;
 static bool g_rawMouseFixEnabled = false;
+// Off by default because Minecraft 1.8.9 exposes no server-confirmed
+// "damage was blocked" bit; this feature is deliberately heuristic.
+static bool g_blockHitSoundEnabled = BlockHitAudio::kDefaultFeatureEnabled;
+static bool g_blockHitSoundDebugEnabled =
+    BlockHitAudio::kDefaultDebugLoggingEnabled;
+static std::string g_blockHitSoundSource = "Default";
+static std::string g_blockHitSoundFilename = "block-hit.wav";
+static float g_blockHitSoundVolume = BlockHitAudio::kDefaultVolumePercent;
+static int g_nickScoreThreshold = 70;
+static bool g_nickRollEnabled = true;
+static bool g_nickScorePingEnabled = true;
+static bool g_nickScoreAlertEveryEnabled = true;
+static bool g_nickRollAutoRerollEnabled = false;
+static int g_nickRollToggleKey = 0x24; // VK_HOME
+static bool g_blockHitWaitForServer = true;
+// 600ms is deliberately unhurried. The book has to redraw and the server has
+// to answer between presses, and a delay short enough to outrun that reads the
+// same page twice and burns rerolls on a name it already scored.
+static int g_nickRollRerollDelayMs = 600;
+static int g_nickRollRerollCap = 300;
+static std::string g_nickRollTargetWord;
 static bool g_techEnabled = false;
 static bool g_anticheatEnabled = true;
 static bool g_anticheatNoSlowEnabled = true;
@@ -190,7 +214,7 @@ static bool g_debugGeneral = false;
 static std::atomic<bool> g_savePending = false;
 static ULONGLONG g_lastSaveRequest = 0;
 
-static std::string getConfigDir() {
+std::string Config::getDataDirectory() {
   char appdata[MAX_PATH]{};
   if (SUCCEEDED(
           SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, appdata))) {
@@ -200,6 +224,8 @@ static std::string getConfigDir() {
   }
   return ".";
 }
+
+static std::string getConfigDir() { return Config::getDataDirectory(); }
 
 static std::string getConfigPath() { return getConfigDir() + "\\config.json"; }
 
@@ -217,6 +243,21 @@ static bool parseJsonLine(const std::string &line, const char *key,
     return false;
   out = line.substr(q1 + 1, q2 - (q1 + 1));
   return true;
+}
+
+static std::string sanitizeNickRollTargetWord(const std::string &value) {
+  std::string sanitized;
+  sanitized.reserve(value.size() < 16U ? value.size() : 16U);
+  for (const char c : value) {
+    const bool allowed = (c >= 'A' && c <= 'Z') ||
+                         (c >= 'a' && c <= 'z') ||
+                         (c >= '0' && c <= '9') || c == '_';
+    if (allowed)
+      sanitized.push_back(c);
+    if (sanitized.size() == 16U)
+      break;
+  }
+  return sanitized;
 }
 
 static bool parseJsonInt(const std::string &all, const char *key, int &out) {
@@ -336,6 +377,8 @@ bool Config::initialize(HMODULE self) {
 
   if (!parseJsonBool(all, "muteSelfTagAlertsEnabled", g_muteSelfTagAlertsEnabled))
     g_muteSelfTagAlertsEnabled = false;
+  if (!parseJsonBool(all, "muteTeamTagAlertsEnabled", g_muteTeamTagAlertsEnabled))
+    g_muteTeamTagAlertsEnabled = false;
 
   if (parseJsonLine(all, "mutedTagPlayers", val))
     parseMutedTagPlayers(val);
@@ -456,6 +499,8 @@ bool Config::initialize(HMODULE self) {
     g_clickGuiLayout = val;
   if (parseJsonLine(all, "layoutBData", val))
     g_layoutBData = val;
+  if (parseJsonLine(all, "bedwarsSettingsData", val))
+    g_bedwarsSettingsData = val;
 
   if (!parseJsonBool(all, "liquidGlassWiggle", g_liquidGlassWiggle))
     g_liquidGlassWiggle = true;
@@ -485,6 +530,62 @@ bool Config::initialize(HMODULE self) {
     g_nickedBypass = true;
   if (!parseJsonBool(all, "rawMouseFixEnabled", g_rawMouseFixEnabled))
     g_rawMouseFixEnabled = false;
+  if (!parseJsonBool(all, "blockHitSoundEnabled", g_blockHitSoundEnabled))
+    g_blockHitSoundEnabled = BlockHitAudio::kDefaultFeatureEnabled;
+  if (!parseJsonBool(all, "blockHitSoundDebugEnabled",
+                     g_blockHitSoundDebugEnabled))
+    g_blockHitSoundDebugEnabled = BlockHitAudio::kDefaultDebugLoggingEnabled;
+  if (parseJsonLine(all, "blockHitSoundSource", val))
+    g_blockHitSoundSource = BlockHitAudio::soundSourceName(
+        BlockHitAudio::parseSoundSource(val));
+  else
+    g_blockHitSoundSource = "Default";
+  if (parseJsonLine(all, "blockHitSoundFilename", val) &&
+      BlockHitAudio::isSafeWavFilename(val))
+    g_blockHitSoundFilename = val;
+  else
+    g_blockHitSoundFilename =
+        std::string(BlockHitAudio::kDefaultCustomFilename);
+  if (!parseJsonFloat(all, "blockHitSoundVolume", g_blockHitSoundVolume))
+    g_blockHitSoundVolume = BlockHitAudio::kDefaultVolumePercent;
+  g_blockHitSoundVolume =
+      BlockHitAudio::sanitizeVolumePercent(g_blockHitSoundVolume);
+  if (!parseJsonInt(all, "nickScoreThreshold", g_nickScoreThreshold))
+    g_nickScoreThreshold = 70;
+  if (g_nickScoreThreshold < 0) g_nickScoreThreshold = 0;
+  if (g_nickScoreThreshold > 100) g_nickScoreThreshold = 100;
+  if (!parseJsonBool(all, "nickRollEnabled", g_nickRollEnabled))
+    g_nickRollEnabled = true;
+  if (!parseJsonBool(all, "nickScorePingEnabled", g_nickScorePingEnabled))
+    g_nickScorePingEnabled = true;
+  if (!parseJsonBool(all, "nickScoreAlertEveryEnabled",
+                     g_nickScoreAlertEveryEnabled))
+    g_nickScoreAlertEveryEnabled = true;
+  // Auto-reroll defaults OFF. It presses a button in the player's game; that
+  // is not something to turn on behind their back on first launch.
+  if (!parseJsonBool(all, "nickRollAutoRerollEnabled",
+                     g_nickRollAutoRerollEnabled))
+    g_nickRollAutoRerollEnabled = false;
+  if (!parseJsonInt(all, "nickRollRerollDelayMs", g_nickRollRerollDelayMs))
+    g_nickRollRerollDelayMs = 600;
+  if (g_nickRollRerollDelayMs < 250) g_nickRollRerollDelayMs = 250;
+  if (g_nickRollRerollDelayMs > 5000) g_nickRollRerollDelayMs = 5000;
+  if (!parseJsonInt(all, "nickRollToggleKey", g_nickRollToggleKey))
+    g_nickRollToggleKey = 0x24;
+  if (g_nickRollToggleKey < 1 || g_nickRollToggleKey > 254)
+    g_nickRollToggleKey = 0x24;
+  // Defaults TRUE so an existing config keeps the confirmation behaviour it
+  // has always had; only someone who deliberately turns it off loses it.
+  if (!parseJsonBool(all, "blockHitWaitForServer", g_blockHitWaitForServer))
+    g_blockHitWaitForServer = true;
+  if (!parseJsonInt(all, "nickRollRerollCap", g_nickRollRerollCap))
+    g_nickRollRerollCap = 300;
+  if (g_nickRollRerollCap < 10) g_nickRollRerollCap = 10;
+  if (g_nickRollRerollCap > 2000) g_nickRollRerollCap = 2000;
+  if (parseJsonLine(all, "nickRollTargetWord", val))
+    g_nickRollTargetWord = sanitizeNickRollTargetWord(val);
+  else
+    g_nickRollTargetWord.clear();
 
   if (g_discordAppId == "1335272304856010773") {
     g_discordAppId = "1467865675262329019";
@@ -684,10 +785,12 @@ static bool saveImpl() {
       "  \"activeTagService\": \"%s\",\n"
       "  \"muteTagAlertsEnabled\": %s,\n"
       "  \"muteSelfTagAlertsEnabled\": %s,\n"
+      "  \"muteTeamTagAlertsEnabled\": %s,\n"
       "  \"mutedTagPlayers\": \"%s\",\n"
       "  \"clickGuiTheme\": \"%s\",\n"
       "  \"clickGuiLayout\": \"%s\",\n"
       "  \"layoutBData\": \"%s\",\n"
+      "  \"bedwarsSettingsData\": \"%s\",\n"
       "  \"liquidGlassWiggle\": %s,\n"
       "  \"liquidGlassGlow\": %s,\n"
       "  \"liquidGlassRefractStrength\": %.2f,\n"
@@ -713,6 +816,21 @@ static bool saveImpl() {
       "  \"tabSortDescending\": %s,\n"
       "  \"nickedBypass\": %s,\n"
       "  \"rawMouseFixEnabled\": %s,\n"
+      "  \"blockHitSoundEnabled\": %s,\n"
+      "  \"blockHitSoundDebugEnabled\": %s,\n"
+      "  \"blockHitSoundSource\": \"%s\",\n"
+      "  \"blockHitSoundFilename\": \"%s\",\n"
+      "  \"blockHitSoundVolume\": %.2f,\n"
+      "  \"nickScoreThreshold\": %d,\n"
+      "  \"nickRollEnabled\": %s,\n"
+      "  \"nickScorePingEnabled\": %s,\n"
+      "  \"nickScoreAlertEveryEnabled\": %s,\n"
+      "  \"nickRollAutoRerollEnabled\": %s,\n"
+      "  \"nickRollRerollDelayMs\": %d,\n"
+      "  \"nickRollRerollCap\": %d,\n"
+      "  \"nickRollToggleKey\": %d,\n"
+      "  \"blockHitWaitForServer\": %s,\n"
+      "  \"nickRollTargetWord\": \"%s\",\n"
       "  \"sortMode\": \"%s\",\n"
       "  \"ovShowStar\": %s, \"ovShowFk\": %s, \"ovShowFkdr\": %s, "
       "\"ovShowWins\": %s, \"ovShowWlr\": %s, \"ovShowWs\": %s,\n"
@@ -765,10 +883,12 @@ static bool saveImpl() {
       g_tagsEnabled ? "true" : "false", g_activeTagService.c_str(),
       g_muteTagAlertsEnabled ? "true" : "false",
       g_muteSelfTagAlertsEnabled ? "true" : "false",
+      g_muteTeamTagAlertsEnabled ? "true" : "false",
       serializeMutedTagPlayers().c_str(),
       g_clickGuiTheme.c_str(),
       g_clickGuiLayout.c_str(),
       g_layoutBData.c_str(),
+      g_bedwarsSettingsData.c_str(),
       g_liquidGlassWiggle ? "true" : "false",
       g_liquidGlassGlow ? "true" : "false",
       g_liquidGlassRefractStrength,
@@ -788,6 +908,17 @@ static bool saveImpl() {
       g_tabDisplayMode.c_str(), g_tabSortDescending ? "true" : "false",
       g_nickedBypass ? "true" : "false",
       g_rawMouseFixEnabled ? "true" : "false",
+      g_blockHitSoundEnabled ? "true" : "false",
+      g_blockHitSoundDebugEnabled ? "true" : "false",
+      g_blockHitSoundSource.c_str(), g_blockHitSoundFilename.c_str(),
+      g_blockHitSoundVolume,
+      g_nickScoreThreshold, g_nickRollEnabled ? "true" : "false",
+      g_nickScorePingEnabled ? "true" : "false",
+      g_nickScoreAlertEveryEnabled ? "true" : "false",
+      g_nickRollAutoRerollEnabled ? "true" : "false",
+      g_nickRollRerollDelayMs, g_nickRollRerollCap, g_nickRollToggleKey,
+      g_blockHitWaitForServer ? "true" : "false",
+      g_nickRollTargetWord.c_str(),
       g_sortMode.c_str(),
       g_ovShowStar ? "true" : "false", g_ovShowFk ? "true" : "false",
       g_ovShowFkdr ? "true" : "false", g_ovShowWins ? "true" : "false",
@@ -920,6 +1051,135 @@ void Config::setNickedBypass(bool enabled) {
 bool Config::isRawMouseFixEnabled() { return g_rawMouseFixEnabled; }
 void Config::setRawMouseFixEnabled(bool enabled) {
   g_rawMouseFixEnabled = enabled;
+  save();
+}
+
+bool Config::isBlockHitSoundEnabled() { return g_blockHitSoundEnabled; }
+void Config::setBlockHitSoundEnabled(bool enabled) {
+  if (g_blockHitSoundEnabled == enabled) return;
+  g_blockHitSoundEnabled = enabled;
+  save();
+}
+
+bool Config::isBlockHitSoundDebugEnabled() {
+  return g_blockHitSoundDebugEnabled;
+}
+void Config::setBlockHitSoundDebugEnabled(bool enabled) {
+  if (g_blockHitSoundDebugEnabled == enabled) return;
+  g_blockHitSoundDebugEnabled = enabled;
+  save();
+}
+
+const std::string &Config::getBlockHitSoundSource() {
+  return g_blockHitSoundSource;
+}
+void Config::setBlockHitSoundSource(const std::string &source) {
+  const std::string sanitized = BlockHitAudio::soundSourceName(
+      BlockHitAudio::parseSoundSource(source));
+  if (g_blockHitSoundSource == sanitized) return;
+  g_blockHitSoundSource = sanitized;
+  save();
+}
+
+const std::string &Config::getBlockHitSoundFilename() {
+  return g_blockHitSoundFilename;
+}
+void Config::setBlockHitSoundFilename(const std::string &filename) {
+  if (!BlockHitAudio::isSafeWavFilename(filename) ||
+      g_blockHitSoundFilename == filename)
+    return;
+  g_blockHitSoundFilename = filename;
+  save();
+}
+
+float Config::getBlockHitSoundVolume() { return g_blockHitSoundVolume; }
+void Config::setBlockHitSoundVolume(float volumePercent) {
+  const float sanitized =
+      BlockHitAudio::sanitizeVolumePercent(volumePercent);
+  if (g_blockHitSoundVolume == sanitized) return;
+  g_blockHitSoundVolume = sanitized;
+  save();
+}
+
+int Config::getNickScoreThreshold() { return g_nickScoreThreshold; }
+void Config::setNickScoreThreshold(int threshold) {
+  const int sanitized = threshold < 0 ? 0 : (threshold > 100 ? 100 : threshold);
+  if (g_nickScoreThreshold == sanitized) return;
+  g_nickScoreThreshold = sanitized;
+  save();
+}
+
+bool Config::isNickRollEnabled() { return g_nickRollEnabled; }
+void Config::setNickRollEnabled(bool enabled) {
+  if (g_nickRollEnabled == enabled) return;
+  g_nickRollEnabled = enabled;
+  save();
+}
+
+bool Config::isNickScorePingEnabled() { return g_nickScorePingEnabled; }
+void Config::setNickScorePingEnabled(bool enabled) {
+  if (g_nickScorePingEnabled == enabled) return;
+  g_nickScorePingEnabled = enabled;
+  save();
+}
+
+bool Config::isNickScoreAlertEveryEnabled() {
+  return g_nickScoreAlertEveryEnabled;
+}
+void Config::setNickScoreAlertEveryEnabled(bool enabled) {
+  if (g_nickScoreAlertEveryEnabled == enabled) return;
+  g_nickScoreAlertEveryEnabled = enabled;
+  save();
+}
+
+bool Config::isNickRollAutoRerollEnabled() {
+  return g_nickRollAutoRerollEnabled;
+}
+void Config::setNickRollAutoRerollEnabled(bool enabled) {
+  if (g_nickRollAutoRerollEnabled == enabled) return;
+  g_nickRollAutoRerollEnabled = enabled;
+  save();
+}
+
+int Config::getNickRollRerollDelayMs() { return g_nickRollRerollDelayMs; }
+void Config::setNickRollRerollDelayMs(int milliseconds) {
+  const int sanitized =
+      milliseconds < 250 ? 250 : (milliseconds > 5000 ? 5000 : milliseconds);
+  if (g_nickRollRerollDelayMs == sanitized) return;
+  g_nickRollRerollDelayMs = sanitized;
+  save();
+}
+
+int Config::getNickRollToggleKey() { return g_nickRollToggleKey; }
+void Config::setNickRollToggleKey(int virtualKey) {
+  if (virtualKey < 1 || virtualKey > 254) return;
+  if (g_nickRollToggleKey == virtualKey) return;
+  g_nickRollToggleKey = virtualKey;
+  save();
+}
+
+bool Config::isBlockHitWaitForServerEnabled() { return g_blockHitWaitForServer; }
+void Config::setBlockHitWaitForServerEnabled(bool enabled) {
+  if (g_blockHitWaitForServer == enabled) return;
+  g_blockHitWaitForServer = enabled;
+  save();
+}
+
+int Config::getNickRollRerollCap() { return g_nickRollRerollCap; }
+void Config::setNickRollRerollCap(int cap) {
+  const int sanitized = cap < 10 ? 10 : (cap > 2000 ? 2000 : cap);
+  if (g_nickRollRerollCap == sanitized) return;
+  g_nickRollRerollCap = sanitized;
+  save();
+}
+
+const std::string &Config::getNickRollTargetWord() {
+  return g_nickRollTargetWord;
+}
+void Config::setNickRollTargetWord(const std::string &targetWord) {
+  const std::string sanitized = sanitizeNickRollTargetWord(targetWord);
+  if (g_nickRollTargetWord == sanitized) return;
+  g_nickRollTargetWord = sanitized;
   save();
 }
 
@@ -1098,6 +1358,12 @@ void Config::setMuteTagAlertsEnabled(bool enabled) {
   save();
 }
 bool Config::isMuteSelfTagAlertsEnabled() { return g_muteSelfTagAlertsEnabled; }
+bool Config::isMuteTeamTagAlertsEnabled() { return g_muteTeamTagAlertsEnabled; }
+void Config::setMuteTeamTagAlertsEnabled(bool enabled) {
+  if (g_muteTeamTagAlertsEnabled == enabled) return;
+  g_muteTeamTagAlertsEnabled = enabled;
+  save();
+}
 void Config::setMuteSelfTagAlertsEnabled(bool enabled) {
   g_muteSelfTagAlertsEnabled = enabled;
   save();
@@ -1144,6 +1410,13 @@ void Config::setClickGuiLayout(const std::string &layout) {
 const std::string &Config::getLayoutBData() { return g_layoutBData; }
 void Config::setLayoutBData(const std::string &data) {
   g_layoutBData = data;
+  save();
+}
+const std::string &Config::getBedwarsSettingsData() {
+  return g_bedwarsSettingsData;
+}
+void Config::setBedwarsSettingsData(const std::string &data) {
+  g_bedwarsSettingsData = data;
   save();
 }
 
