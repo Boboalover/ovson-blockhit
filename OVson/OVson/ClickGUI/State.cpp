@@ -69,11 +69,6 @@ bool  s_accentInit = false;
 
 int   s_colorSelectedStat = 0;
 bool  s_colorPickerOpen = false;
-float s_cpHue = 0.0f;
-float s_cpSat = 1.0f;
-float s_cpVal = 1.0f;
-bool  s_cpDraggingSV = false;
-bool  s_cpDraggingHue = false;
 char  s_cpMinBuf[16] = "0";
 char  s_cpMaxBuf[16] = "100";
 int   s_cpMinLen = 1;

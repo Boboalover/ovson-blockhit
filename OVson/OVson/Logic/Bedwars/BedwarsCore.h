@@ -457,6 +457,7 @@ struct PlayerAlertOptions {
   bool upgrades = false;
   bool consumes = false;
   bool items = false;
+  bool ignoreOwnTeam = true;
   // Per-item switches. `items` is still the master: turning it off silences
   // every item regardless of what is set here.
   std::array<bool, kImportantItemCount> itemEnabled = allItemAlertsEnabled();

@@ -175,6 +175,10 @@ bool isOnlyNextEvent() { return get().onlyNextEvent; }
 void setOnlyNextEvent(bool enabled) {
   mutate([&](Settings &settings) { settings.onlyNextEvent = enabled; });
 }
+bool isIgnoringOwnTeam() { return get().ignoreOwnTeam; }
+void setIgnoreOwnTeam(bool enabled) {
+  mutate([&](Settings &settings) { settings.ignoreOwnTeam = enabled; });
+}
 bool isResourceHudEnabled() {
   return get().hud[static_cast<std::size_t>(HudId::Resource)].visible;
 }
@@ -327,11 +331,12 @@ void resetAllHudLayouts() {
 std::string serialize(const Settings &settings) {
   std::ostringstream out;
   out << std::fixed << std::setprecision(3);
-  out << "version=5;master=" << settings.masterEnabled << ';';
+  out << "version=6;master=" << settings.masterEnabled << ';';
   for (std::size_t i = 0; i < kModuleCount; ++i)
     out << moduleKey(static_cast<Module>(i)) << '=' << settings.modules[i] << ';';
   out << "debug=" << settings.debug << ";sounds=" << settings.sounds
       << ";onlyNextEvent=" << settings.onlyNextEvent
+      << ";ignoreOwnTeam=" << settings.ignoreOwnTeam
       << ";resourceHud=" << settings.resourceHudVisible()
       << ";resourceIron=" << settings.resources[0]
       << ";resourceGold=" << settings.resources[1]
@@ -367,10 +372,10 @@ std::string serialize(const Settings &settings) {
 Settings deserialize(const std::string &data) {
   Settings settings;
   const auto pairs = parsePairs(data);
-  // An empty file is a fresh v4 configuration.  Only persisted legacy data
+  // An empty file is a fresh current configuration. Only persisted legacy data
   // without a version marker should receive the v1 compatibility defaults.
-  const int version = data.empty() ? 5 : readInt(pairs, "version", 1, 1, 5);
-  settings.formatVersion = 5;
+  const int version = data.empty() ? 6 : readInt(pairs, "version", 1, 1, 6);
+  settings.formatVersion = 6;
   settings.masterEnabled = readBool(pairs, "master", false);
   for (std::size_t i = 0; i < kModuleCount; ++i)
     settings.modules[i] =
@@ -380,6 +385,7 @@ Settings deserialize(const std::string &data) {
   settings.debug = readBool(pairs, "debug", false);
   settings.sounds = readBool(pairs, "sounds", true);
   settings.onlyNextEvent = readBool(pairs, "onlyNextEvent", true);
+  settings.ignoreOwnTeam = readBool(pairs, "ignoreOwnTeam", true);
   const bool legacyResourceHud = readBool(pairs, "resourceHud", false);
   settings.resources[0] = readBool(pairs, "resourceIron", true);
   settings.resources[1] = readBool(pairs, "resourceGold", true);

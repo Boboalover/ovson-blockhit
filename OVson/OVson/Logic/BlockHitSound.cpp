@@ -10,6 +10,7 @@
 #include "../Java.h"
 #include "../Render/NotificationManager.h"
 #include "../SDK/McAccess.h"
+#include "../Utils/Anticheat/Anticheat.h"
 #include "../Utils/Logger.h"
 
 #include <Windows.h>
@@ -146,11 +147,13 @@ std::atomic<std::uint64_t> g_signalArrivals[8]{};
 std::atomic<std::uint64_t> g_worldResetCount{0};
 std::uint64_t g_lastTelemetryAtMs = 0;
 BlockHitHeuristic::Detector g_detector;
+BlockHitHeuristic::Detector g_autoBlockDetector;
 JniCache g_jni;
 EnvironmentalTracker g_environment;
 jobject g_worldRef = nullptr;
 int g_localEntityId = -1;
-bool g_featureEnabled = false;
+bool g_soundDetectorEnabled = false;
+bool g_autoBlockDetectorEnabled = false;
 bool g_wasDead = false;
 bool g_audioWorkerUsed = false;
 bool g_audioSettingsInitialized = false;
@@ -455,8 +458,10 @@ const char *resetReasonName(ResetReason reason) {
 }
 
 void resetBoundary(JNIEnv *env, ResetReason reason, Millis atMs,
-                   bool clearQueue) {
+                    bool clearQueue) {
   const Result result = g_detector.reset(reason, atMs);
+  g_autoBlockDetector.reset(reason, atMs);
+  Anticheat::resetAutoBlockEvidence();
   g_environment.clear();
   g_localEntityId = -1;
   g_wasDead = false;
@@ -531,11 +536,14 @@ void logDiagnostic(const Diagnostic &diagnostic, std::uint64_t nowMs) {
   }
   Logger::info(
       "[BlockHitSound/heuristic] decision=%s t=%lld entity=%d distance=%.2f "
-      "hazards=0x%x health=%d velocity=%d",
+      "hazards=0x%x health=%d velocity=%d attackerBlockKnown=%d "
+      "attackerBlocking=%d attackerSword=%d",
       diagnosticName(diagnostic.code),
       static_cast<long long>(diagnostic.atMs), diagnostic.entityId,
       diagnostic.distance, static_cast<unsigned int>(diagnostic.hazards),
-      diagnostic.healthConfirmed, diagnostic.velocityConfirmed);
+      diagnostic.healthConfirmed, diagnostic.velocityConfirmed,
+      diagnostic.attackerBlockingKnown, diagnostic.attackerBlocking,
+      diagnostic.attackerHoldingSword);
 }
 
 void playMinecraftSound(JNIEnv *env, jobject player, float volumePercent) {
@@ -682,26 +690,53 @@ void syncAudioSettings() {
 }
 
 void applyResult(JNIEnv *env, jobject player, const Result &result,
-                 std::uint64_t nowMs) {
+                  std::uint64_t nowMs) {
   for (std::size_t i = 0; i < result.diagnosticCount; ++i)
     logDiagnostic(result.diagnostics[i], nowMs);
   if (result.playSound) playConfiguredSound(env, player, false, nowMs);
 }
 
-Result observeSwing(JNIEnv *env, jobject player, jobject world,
-                    const ServerSignal &signal) {
+void applyAutoBlockResult(const Result &result) {
+  for (std::size_t i = 0; i < result.diagnosticCount; ++i) {
+    const Diagnostic &diagnostic = result.diagnostics[i];
+    Anticheat::abLog(
+        "detector decision=%s t=%lld eid=%d distance=%.2f health=%d "
+        "velocity=%d blockKnown=%d blocking=%d sword=%d",
+        diagnosticName(diagnostic.code),
+        static_cast<long long>(diagnostic.atMs), diagnostic.entityId,
+        diagnostic.distance, (int)diagnostic.healthConfirmed,
+        (int)diagnostic.velocityConfirmed,
+        (int)diagnostic.attackerBlockingKnown,
+        (int)diagnostic.attackerBlocking,
+        (int)diagnostic.attackerHoldingSword);
+    if (diagnostic.code != DiagnosticCode::SoundTriggered ||
+        diagnostic.entityId < 0 ||
+        (!diagnostic.healthConfirmed && !diagnostic.velocityConfirmed)) {
+      continue;
+    }
+    Anticheat::observeConfirmedBlockHit(
+        diagnostic.entityId, static_cast<std::uint64_t>(diagnostic.atMs),
+        diagnostic.distance, diagnostic.attackerBlockingKnown,
+        diagnostic.attackerBlocking, diagnostic.attackerHoldingSword,
+        diagnostic.healthConfirmed, diagnostic.velocityConfirmed);
+  }
+}
+
+BlockHitHeuristic::SwingEvent inspectSwing(JNIEnv *env, jobject player,
+                                           jobject world,
+                                           const ServerSignal &signal) {
   BlockHitHeuristic::SwingEvent event;
   event.atMs = toMillis(signal.atMs);
   event.entityId = signal.entityId;
   event.isLocalPlayer = signal.entityId == g_localEntityId;
-  if (event.isLocalPlayer) return g_detector.observeSwing(event);
+  if (event.isLocalPlayer) return event;
 
   jobject attacker =
       env->CallObjectMethod(world, g_jni.worldGetEntity, signal.entityId);
   if (env->ExceptionCheck() || !attacker) {
     clearJniException(env);
     event.isPlayer = false;
-    return g_detector.observeSwing(event);
+    return event;
   }
 
   event.isPlayer = env->IsInstanceOf(attacker, g_jni.playerClass) == JNI_TRUE;
@@ -734,8 +769,15 @@ Result observeSwing(JNIEnv *env, jobject player, jobject world,
     event.distance = std::numeric_limits<double>::quiet_NaN();
   }
   clearJniException(env);
+
+  if (event.isPlayer) {
+    event.attackerBlocking =
+        callBoolean(env, attacker, g_jni.isBlocking,
+                    &event.attackerBlockingKnown);
+    event.attackerHoldingSword = readHoldingSword(env, attacker);
+  }
   env->DeleteLocalRef(attacker);
-  return g_detector.observeSwing(event);
+  return event;
 }
 
 } // namespace
@@ -853,21 +895,35 @@ void update(JNIEnv *env) {
   // not on the next time the feature is switched off and on again.
   g_detector.setRequireServerConfirmation(
       Config::isBlockHitWaitForServerEnabled());
+  g_autoBlockDetector.setRequireServerConfirmation(true);
 
-  const bool configuredEnabled = Config::isBlockHitSoundEnabled();
-  if (configuredEnabled != g_featureEnabled) {
-    g_featureEnabled = configuredEnabled;
-    const Result transition = g_detector.setEnabled(configuredEnabled, nowMs);
+  const bool soundEnabled = Config::isBlockHitSoundEnabled();
+  const bool autoBlockEnabled =
+      Config::isAnticheatEnabled() && Config::isAnticheatAutoBlockEnabled();
+  if (soundEnabled != g_soundDetectorEnabled) {
+    g_soundDetectorEnabled = soundEnabled;
+    const Result transition = g_detector.setEnabled(soundEnabled, nowMs);
     applyResult(env, player, transition, now);
     g_environment.clear();
+    if (soundEnabled) sessionChanged = true;
+    else if (g_audioWorkerUsed) BlockHitAudioBackend::requestStop();
+  }
+  if (autoBlockEnabled != g_autoBlockDetectorEnabled) {
+    g_autoBlockDetectorEnabled = autoBlockEnabled;
+    const Result transition =
+        g_autoBlockDetector.setEnabled(autoBlockEnabled, nowMs);
+    applyAutoBlockResult(transition);
+    Anticheat::resetAutoBlockEvidence();
+    if (autoBlockEnabled) sessionChanged = true;
+  }
+  const bool detectorEnabled = soundEnabled || autoBlockEnabled;
+  if (!detectorEnabled) {
     signals.clear();
     clearQueuedSignals();
-    if (configuredEnabled) sessionChanged = true;
-    else if (g_audioWorkerUsed) BlockHitAudioBackend::requestStop();
   }
   const bool preview =
       g_previewRequested.exchange(false, std::memory_order_acq_rel);
-  if (!configuredEnabled && !preview) {
+  if (!detectorEnabled && !preview) {
     env->DeleteLocalRef(player);
     env->DeleteLocalRef(world);
     return;
@@ -883,7 +939,7 @@ void update(JNIEnv *env) {
   }
 
   if (preview) playConfiguredSound(env, player, true, now);
-  if (!configuredEnabled) {
+  if (!detectorEnabled) {
     env->DeleteLocalRef(player);
     env->DeleteLocalRef(world);
     return;
@@ -894,7 +950,10 @@ void update(JNIEnv *env) {
       snapshot.health < 0.0f) {
     if (g_localEntityId >= 0 || g_detector.hasPendingHurt() ||
         g_detector.storedSwingCount() != 0 ||
-        g_detector.storedConfirmationCount() != 0) {
+        g_detector.storedConfirmationCount() != 0 ||
+        g_autoBlockDetector.hasPendingHurt() ||
+        g_autoBlockDetector.storedSwingCount() != 0 ||
+        g_autoBlockDetector.storedConfirmationCount() != 0) {
       resetBoundary(env, ResetReason::LocalStateUnavailable, nowMs, true);
     }
     env->DeleteLocalRef(player);
@@ -924,48 +983,74 @@ void update(JNIEnv *env) {
   }
   g_wasDead = false;
   g_environment.observe(snapshot, nowMs);
-  if (sessionChanged) g_detector.seedHealth(snapshot.health);
+  if (sessionChanged) {
+    g_detector.seedHealth(snapshot.health);
+    g_autoBlockDetector.seedHealth(snapshot.health);
+  }
 
   for (const ServerSignal &signal : signals) {
-    Result result;
+    Result soundResult;
+    Result autoBlockResult;
     const Millis signalAt = toMillis(signal.atMs);
     switch (signal.kind) {
-    case ServerSignalKind::Swing:
-      result = observeSwing(env, player, world, signal);
+    case ServerSignalKind::Swing: {
+      const BlockHitHeuristic::SwingEvent event =
+          inspectSwing(env, player, world, signal);
+      soundResult = g_detector.observeSwing(event);
+      autoBlockResult = g_autoBlockDetector.observeSwing(event);
       break;
-    case ServerSignalKind::Hurt:
-      result = g_detector.observeHurt(
-          {signalAt, signal.entityId == g_localEntityId, snapshot.blocking,
-           snapshot.holdingSword, g_environment.evidenceAt(signalAt)});
+    }
+    case ServerSignalKind::Hurt: {
+      const BlockHitHeuristic::HurtEvent event{
+          signalAt, signal.entityId == g_localEntityId, snapshot.blocking,
+          snapshot.holdingSword, g_environment.evidenceAt(signalAt)};
+      soundResult = g_detector.observeHurt(event);
+      autoBlockResult = g_autoBlockDetector.observeHurt(event);
       break;
+    }
     case ServerSignalKind::Health:
-      result = g_detector.observeHealth(signalAt, signal.value1);
+      soundResult = g_detector.observeHealth(signalAt, signal.value1);
+      autoBlockResult =
+          g_autoBlockDetector.observeHealth(signalAt, signal.value1);
       break;
     case ServerSignalKind::Velocity:
-      result = g_detector.observeVelocity(
+      soundResult = g_detector.observeVelocity(
+          signalAt, signal.entityId == g_localEntityId, signal.data1,
+          signal.data2, signal.data3);
+      autoBlockResult = g_autoBlockDetector.observeVelocity(
           signalAt, signal.entityId == g_localEntityId, signal.data1,
           signal.data2, signal.data3);
       break;
     case ServerSignalKind::Explosion:
-      result = g_detector.observeExplosion(signalAt);
+      soundResult = g_detector.observeExplosion(signalAt);
+      autoBlockResult = g_autoBlockDetector.observeExplosion(signalAt);
       break;
     case ServerSignalKind::Respawn:
-      result = g_detector.reset(ResetReason::Respawn, signalAt);
+      soundResult = g_detector.reset(ResetReason::Respawn, signalAt);
+      autoBlockResult =
+          g_autoBlockDetector.reset(ResetReason::Respawn, signalAt);
       g_environment.clear();
       g_detector.seedHealth(snapshot.health);
+      g_autoBlockDetector.seedHealth(snapshot.health);
+      Anticheat::resetAutoBlockEvidence();
       if (g_audioWorkerUsed) BlockHitAudioBackend::requestStop();
       break;
     case ServerSignalKind::Disconnect:
-      result = g_detector.reset(ResetReason::Disconnect, signalAt);
+      soundResult = g_detector.reset(ResetReason::Disconnect, signalAt);
+      autoBlockResult =
+          g_autoBlockDetector.reset(ResetReason::Disconnect, signalAt);
       g_environment.clear();
+      Anticheat::resetAutoBlockEvidence();
       if (g_audioWorkerUsed) BlockHitAudioBackend::requestStop();
       break;
     }
-    applyResult(env, player, result, now);
+    applyResult(env, player, soundResult, now);
+    applyAutoBlockResult(autoBlockResult);
     if (signal.kind == ServerSignalKind::Disconnect) break;
   }
 
   applyResult(env, player, g_detector.advance(nowMs), now);
+  applyAutoBlockResult(g_autoBlockDetector.advance(nowMs));
 
   const std::uint64_t dropped =
       g_droppedSignals.exchange(0, std::memory_order_relaxed);
@@ -1001,11 +1086,13 @@ void update(JNIEnv *env) {
                    "blocking=%d sword=%d hp=%.1f entity=%d pending=%d "
                    "swings=%zu worldResets=%llu",
                    hurt, swing, velocity, health, respawn, explosion,
-                   configuredEnabled ? 1 : 0, snapshot.blocking ? 1 : 0,
+                   soundEnabled ? 1 : 0, snapshot.blocking ? 1 : 0,
                    snapshot.holdingSword ? 1 : 0,
                    static_cast<double>(snapshot.health), snapshot.entityId,
-                   g_detector.hasPendingHurt() ? 1 : 0,
-                   g_detector.storedSwingCount(),
+                   (g_detector.hasPendingHurt() ||
+                    g_autoBlockDetector.hasPendingHurt()) ? 1 : 0,
+                   g_detector.storedSwingCount() +
+                       g_autoBlockDetector.storedSwingCount(),
                    static_cast<unsigned long long>(
                        g_worldResetCount.load(std::memory_order_relaxed)));
     }
@@ -1018,8 +1105,10 @@ void update(JNIEnv *env) {
 void shutdown(JNIEnv *env) {
   setCallbackAcceptance(false);
   resetBoundary(env, ResetReason::Shutdown, toMillis(GetTickCount64()), true);
-  g_featureEnabled = false;
+  g_soundDetectorEnabled = false;
+  g_autoBlockDetectorEnabled = false;
   g_detector.setEnabled(false, toMillis(GetTickCount64()));
+  g_autoBlockDetector.setEnabled(false, toMillis(GetTickCount64()));
   g_previewWaitingForLoad = false;
   g_reloadRequested.store(false, std::memory_order_release);
   g_previewRequested.store(false, std::memory_order_release);

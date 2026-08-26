@@ -215,18 +215,16 @@ void renderUtils(TabCtx &ctx) {
 
   float nickThreshold =
       static_cast<float>(Config::getNickScoreThreshold());
-  char thresholdText[16]{};
-  snprintf(thresholdText, sizeof(thresholdText), "%d",
-           static_cast<int>(nickThreshold));
   g_guiFont.drawString(cx + 10, cy + 88, "Stop score",
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
-  const float thresholdTextWidth =
-      g_guiFont.getStringWidth(thresholdText) * (0.42f / 0.5f);
-  g_guiFont.drawString(nickValueRight - thresholdTextWidth, cy + 88,
-                       thresholdText, applyAlpha(accent(), alpha), 0.42f);
-  if (drawSlider(3070, nickSliderX, cy + 96.0f, nickSliderW, 8.0f,
-                 nickThreshold, 0.0f, 100.0f, mx, my,
-                 lClick, alpha)) {
+  bool thresholdChanged =
+      drawSlider(3070, nickSliderX, cy + 96.0f, nickSliderW, 8.0f,
+                 nickThreshold, 0.0f, 100.0f, mx, my, lClick, alpha);
+  thresholdChanged =
+      drawNumericInput(3070, nickValueRight - 50.0f, cy + 82.0f, 50.0f,
+                       25.0f, nickThreshold, 0.0f, 100.0f, 0, "", mx, my,
+                       clickEvent, alpha) || thresholdChanged;
+  if (thresholdChanged) {
     Config::setNickScoreThreshold(
         static_cast<int>(std::lround(nickThreshold)));
   }
@@ -299,33 +297,31 @@ void renderUtils(TabCtx &ctx) {
 
   float rerollDelay =
       static_cast<float>(Config::getNickRollRerollDelayMs());
-  char delayText[16]{};
-  snprintf(delayText, sizeof(delayText), "%dms",
-           static_cast<int>(rerollDelay));
   g_guiFont.drawString(cx + 10, cy + 268, "Delay",
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
-  const float delayTextWidth =
-      g_guiFont.getStringWidth(delayText) * (0.42f / 0.5f);
-  g_guiFont.drawString(nickValueRight - delayTextWidth, cy + 268,
-                       delayText, applyAlpha(accent(), alpha), 0.42f);
-  if (drawSlider(3071, nickSliderX, cy + 276.0f, nickSliderW, 8.0f,
-                 rerollDelay, 250.0f, 5000.0f, mx, my,
-                 lClick, alpha)) {
+  bool delayChanged =
+      drawSlider(3071, nickSliderX, cy + 276.0f, nickSliderW, 8.0f,
+                 rerollDelay, 250.0f, 5000.0f, mx, my, lClick, alpha);
+  delayChanged =
+      drawNumericInput(3071, nickValueRight - 62.0f, cy + 262.0f, 62.0f,
+                       25.0f, rerollDelay, 250.0f, 5000.0f, 0, "ms", mx, my,
+                       clickEvent, alpha) || delayChanged;
+  if (delayChanged) {
     Config::setNickRollRerollDelayMs(
         static_cast<int>(std::lround(rerollDelay)));
   }
 
   float rerollCap = static_cast<float>(Config::getNickRollRerollCap());
-  char capText[16]{};
-  snprintf(capText, sizeof(capText), "%d", static_cast<int>(rerollCap));
   g_guiFont.drawString(cx + 10, cy + 302, "Max rerolls",
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
-  const float capTextWidth =
-      g_guiFont.getStringWidth(capText) * (0.42f / 0.5f);
-  g_guiFont.drawString(nickValueRight - capTextWidth, cy + 302, capText,
-                       applyAlpha(accent(), alpha), 0.42f);
-  if (drawSlider(3072, nickSliderX, cy + 310.0f, nickSliderW, 8.0f, rerollCap,
-                 10.0f, 2000.0f, mx, my, lClick, alpha)) {
+  bool capChanged =
+      drawSlider(3072, nickSliderX, cy + 310.0f, nickSliderW, 8.0f, rerollCap,
+                 10.0f, 2000.0f, mx, my, lClick, alpha);
+  capChanged =
+      drawNumericInput(3072, nickValueRight - 54.0f, cy + 296.0f, 54.0f,
+                       25.0f, rerollCap, 10.0f, 2000.0f, 0, "", mx, my,
+                       clickEvent, alpha) || capChanged;
+  if (capChanged) {
     Config::setNickRollRerollCap(static_cast<int>(std::lround(rerollCap)));
   }
 
@@ -436,22 +432,20 @@ void renderUtils(TabCtx &ctx) {
   if (clickEvent && hCustom) Config::setBlockHitSoundSource("Custom");
 
   float blockSoundVolume = Config::getBlockHitSoundVolume();
-  char volumeText[16]{};
-  snprintf(volumeText, sizeof(volumeText), "%d%%",
-           static_cast<int>(blockSoundVolume + 0.5f));
   g_guiFont.drawString(cx + 10, cy + 125, "Volume",
                        applyAlpha(0xFFFFFFFF, alpha), 0.42f);
-  const float volumeTextWidth =
-      g_guiFont.getStringWidth(volumeText) * (0.42f / 0.5f);
   const float blockValueRight = mainX + g_w - 38.0f;
   const float blockSliderX = cx + 100.0f;
   const float blockSliderRight = mainX + g_w - 92.0f;
-  g_guiFont.drawString(blockValueRight - volumeTextWidth, cy + 125,
-                       volumeText, applyAlpha(accent(), alpha), 0.42f);
-  if (drawSlider(3060, blockSliderX, cy + 132.0f,
+  bool volumeChanged = drawSlider(3060, blockSliderX, cy + 132.0f,
                  blockSliderRight - blockSliderX, 8.0f,
                  blockSoundVolume, 0.0f, 100.0f, mx, my,
-                 lClick, alpha)) {
+                 lClick, alpha);
+  volumeChanged =
+      drawNumericInput(3060, blockValueRight - 54.0f, cy + 118.0f, 54.0f,
+                       25.0f, blockSoundVolume, 0.0f, 100.0f, 0, "%", mx, my,
+                       clickEvent, alpha) || volumeChanged;
+  if (volumeChanged) {
     Config::setBlockHitSoundVolume(blockSoundVolume);
   }
 
@@ -590,6 +584,219 @@ void renderUtils(TabCtx &ctx) {
   }
   cy += 110;
 
+
+  drawSectionLabel(cx, cy, "Now Playing Overlay", alpha);
+  const bool mediaEnabled = Config::isMediaOverlayEnabled();
+  static bool mediaColorsExpanded = false;
+  static int mediaPicker = -1; // 0=background, 1=accent, 2=text
+  const float mediaCardH =
+      mediaEnabled
+          ? (mediaColorsExpanded ? (mediaPicker >= 0 ? 690.0f : 466.0f)
+                                 : 280.0f)
+          : 64.0f;
+  const bool hMedia =
+      isHovered(mx, my, mainX + 190, cy + 30, g_w - 210, mediaCardH);
+  glDisable(GL_TEXTURE_2D);
+  drawThemeCard(mainX + 190, cy + 30, g_w - 210, mediaCardH, hMedia, alpha);
+  glEnable(GL_TEXTURE_2D);
+
+  g_guiFont.drawString(cx, cy + 40, "Show what is playing",
+                       applyAlpha(0xFFFFFFFF, alpha));
+  g_guiFont.drawString(
+      cx, cy + 58,
+      "Reads Windows' media session -- Spotify, browser, any player. No login.",
+      applyAlpha(0xFFA0A0A5, alpha), 0.43f);
+  const float mediaSwX = mainX + g_w - 65;
+  const bool hMediaToggle = hMedia && my < cy + 72.0f;
+  glDisable(GL_TEXTURE_2D);
+  drawSwitch(63, mediaSwX, cy + 40, mediaEnabled, hMediaToggle, alpha);
+  glEnable(GL_TEXTURE_2D);
+  if (clickEvent && hMediaToggle)
+    Config::setMediaOverlayEnabled(!mediaEnabled);
+
+  if (mediaEnabled) {
+    const float contentLeft = cx + 10.0f;
+    const float contentRight = mainX + g_w - 36.0f;
+    const float valueRight = contentRight;
+
+    // Two visual layout presets. They change geometry only; appearance values
+    // remain untouched, so switching presets never destroys a custom theme.
+    g_guiFont.drawString(contentLeft, cy + 84, "Layout preset",
+                         applyAlpha(0xFFA0A0A5, alpha), 0.40f);
+    const float presetGap = 10.0f;
+    const float presetY = cy + 100.0f;
+    const float presetH = 54.0f;
+    const float presetW = (contentRight - contentLeft - presetGap) * 0.5f;
+    const float wideX = contentLeft;
+    const float compactX = wideX + presetW + presetGap;
+    const int mediaLayout = Config::getMediaOverlayLayout();
+    const bool hWide = isHovered(mx, my, wideX, presetY, presetW, presetH);
+    const bool hCompact =
+        isHovered(mx, my, compactX, presetY, presetW, presetH);
+    auto presetTile = [&](float tileX, const char *label, bool selected,
+                          bool portrait, bool hovered) {
+      const DWORD tileColor = selected ? accent() : 0xFF242429;
+      RenderUtils::drawRoundedRect(tileX, presetY, presetW, presetH, 7.0f,
+                                   tileColor,
+                                   alpha * (selected ? 0.22f
+                                                     : (hovered ? 0.20f : 0.13f)));
+      const float previewX = tileX + 10.0f;
+      const float previewY = presetY + 25.0f;
+      if (portrait) {
+        const float miniW = 18.0f;
+        const float miniH = 23.0f;
+        const float miniX = previewX + 1.0f;
+        RenderUtils::drawRoundedRect(miniX, previewY - 4.0f, miniW, miniH,
+                                     4.0f, 0xFF111116, alpha * 0.9f);
+        RenderUtils::drawRect(miniX + 4.0f, previewY, 10.0f, 10.0f,
+                              selected ? accent() : 0xFF777780, alpha * 0.8f);
+        RenderUtils::drawRect(miniX + 4.0f, previewY + 13.0f, 10.0f, 1.5f,
+                              selected ? accent() : 0xFF777780, alpha * 0.8f);
+      } else {
+        const float miniW = 36.0f;
+        const float miniH = 20.0f;
+        RenderUtils::drawRoundedRect(previewX, previewY - 2.0f, miniW, miniH,
+                                     4.0f, 0xFF111116, alpha * 0.9f);
+        RenderUtils::drawRect(previewX + 4.0f, previewY + 2.0f, 12.0f, 12.0f,
+                              selected ? accent() : 0xFF777780, alpha * 0.8f);
+        RenderUtils::drawRect(previewX + 20.0f, previewY + 3.0f, 12.0f, 1.5f,
+                              0xFFB0B0B6, alpha * 0.7f);
+        RenderUtils::drawRect(previewX + 20.0f, previewY + 11.0f, 12.0f, 1.5f,
+                              selected ? accent() : 0xFF777780, alpha * 0.8f);
+      }
+      g_guiFont.drawString(tileX + 58.0f, presetY + 19.0f, label,
+                           applyAlpha(selected ? 0xFFFFFFFF : 0xFFC0C0C6,
+                                      alpha),
+                           0.44f);
+      if (selected)
+        g_guiFont.drawString(tileX + 58.0f, presetY + 34.0f, "Selected",
+                             applyAlpha(accent(), alpha), 0.34f);
+    };
+    presetTile(wideX, "Wide", mediaLayout == 0, false, hWide);
+    presetTile(compactX, "Compact", mediaLayout == 1, true, hCompact);
+    if (clickEvent && hWide) Config::setMediaOverlayLayout(0);
+    if (clickEvent && hCompact) Config::setMediaOverlayLayout(1);
+
+    // Labels, tracks and values have dedicated columns. In particular the
+    // percentage text never sits on top of the slider's final segment/thumb.
+    const float sliderX = cx + 176.0f;
+    const float availableSliderW = contentRight - 60.0f - sliderX;
+    const float sliderW = availableSliderW > 80.0f ? availableSliderW : 80.0f;
+    auto plainRow = [&](int id, float rowY, const char *label,
+                        const char *suffix, float value, float low, float high,
+                        void (*apply)(float), float displayFactor) {
+      g_guiFont.drawString(contentLeft, rowY, label,
+                           applyAlpha(0xFFFFFFFF, alpha),
+                           0.42f);
+      float working = value;
+      bool changed = drawSlider(id, sliderX, rowY + 7.0f, sliderW, 8.0f,
+                                working, low, high, mx, my,
+                                lClick && hMedia, alpha);
+      float displayed = working * displayFactor;
+      changed = drawNumericInput(id, valueRight - 58.0f, rowY - 6.0f, 58.0f,
+                                 25.0f, displayed, low * displayFactor,
+                                 high * displayFactor, 0, suffix, mx, my,
+                                 clickEvent && hMedia, alpha) || changed;
+      if (displayed != working * displayFactor) {
+        working = displayed / displayFactor;
+        changed = true;
+      }
+      if (changed) {
+        apply(working);
+      }
+    };
+
+    float mediaScale = Config::getMediaOverlayScale();
+    plainRow(3073, cy + 176, "Size", "%", mediaScale, 0.5f, 2.5f,
+             [](float v) { Config::setMediaOverlayScale(v); }, 100.0f);
+    float mediaOpacity = Config::getMediaOverlayOpacity();
+    plainRow(3074, cy + 212, "Background opacity", "%", mediaOpacity, 0.0f,
+             1.0f, [](float v) { Config::setMediaOverlayOpacity(v); }, 100.0f);
+
+    const bool mediaArt = Config::isMediaOverlayArtEnabled();
+    const bool hMediaArt = hMedia && my >= cy + 235.0f && my < cy + 268.0f;
+    g_guiFont.drawString(contentLeft, cy + 249, "Show album art",
+                         applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+    glDisable(GL_TEXTURE_2D);
+    drawSwitch(64, mediaSwX, cy + 242, mediaArt, hMediaArt, alpha);
+    glEnable(GL_TEXTURE_2D);
+    if (clickEvent && hMediaArt)
+      Config::setMediaOverlayArtEnabled(!mediaArt);
+
+    const bool hAdvanced =
+        hMedia && my >= cy + 271.0f && my < cy + 307.0f;
+    g_guiFont.drawString(contentLeft, cy + 284, "Advanced appearance",
+                         applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+    g_guiFont.drawString(contentRight - 82.0f, cy + 284,
+                         mediaColorsExpanded ? "Hide" : "Customize",
+                         applyAlpha(hAdvanced ? accent() : 0xFFA0A0A5, alpha),
+                         0.38f);
+    if (clickEvent && hAdvanced) {
+      mediaColorsExpanded = !mediaColorsExpanded;
+      if (!mediaColorsExpanded) {
+        mediaPicker = -1;
+        ClickGUIHelpers::cancelInlineEditors();
+      }
+    }
+
+    // Every media colour uses the same picker as the theme and stat ranges.
+    // A compact swatch row keeps the card readable until one is opened.
+    auto colorRow = [&](int pickerSlot, float rowY, const char *label,
+                        unsigned long current) {
+      g_guiFont.drawString(contentLeft, rowY, label,
+                           applyAlpha(0xFFFFFFFF, alpha), 0.42f);
+      const float swatch = 32.0f;
+      const float buttonW = 128.0f;
+      const float buttonX = valueRight - buttonW;
+      const bool hovered =
+          isHovered(mx, my, buttonX, rowY - 5.0f, buttonW, 32.0f);
+      glDisable(GL_TEXTURE_2D);
+      drawThemeButton(buttonX, rowY - 5.0f, buttonW, 32.0f, hovered,
+                      mediaPicker == pickerSlot, alpha);
+      RenderUtils::drawRoundedRect(buttonX + 5.0f, rowY, swatch, 22.0f, 5.0f,
+                                   0xFF000000 | current, alpha);
+      glEnable(GL_TEXTURE_2D);
+      char hex[12]{};
+      snprintf(hex, sizeof(hex), "#%06lX", current & 0xFFFFFFUL);
+      g_guiFont.drawString(buttonX + 44.0f, rowY + 1.0f, hex,
+                           applyAlpha(0xFFC8C8CE, alpha), 0.38f);
+      if (clickEvent && hovered) {
+        ClickGUIHelpers::cancelInlineEditors();
+        mediaPicker = mediaPicker == pickerSlot ? -1 : pickerSlot;
+      }
+    };
+
+    if (mediaColorsExpanded) {
+      float mediaCorner = Config::getMediaOverlayCorner();
+      plainRow(3075, cy + 318, "Corner rounding", "", mediaCorner, 0.0f,
+               20.0f,
+               [](float v) { Config::setMediaOverlayCorner(v); }, 1.0f);
+      colorRow(0, cy + 360, "Background", Config::getMediaOverlayBgColor());
+      colorRow(1, cy + 405, "Accent", Config::getMediaOverlayAccentColor());
+      colorRow(2, cy + 450, "Text", Config::getMediaOverlayTextColor());
+      if (mediaPicker >= 0) {
+        unsigned long raw =
+            mediaPicker == 0 ? Config::getMediaOverlayBgColor()
+                             : (mediaPicker == 1
+                                    ? Config::getMediaOverlayAccentColor()
+                                    : Config::getMediaOverlayTextColor());
+        std::uint32_t selected = 0xFF000000u |
+                                 static_cast<std::uint32_t>(raw & 0xFFFFFFUL);
+        if (drawColorPicker(9200 + mediaPicker, contentLeft, cy + 493.0f,
+                            contentRight - contentLeft, selected, mx, my,
+                            lClick && hMedia, clickEvent && hMedia, alpha)) {
+          const unsigned long rgb = selected & 0xFFFFFFu;
+          if (mediaPicker == 0)
+            Config::setMediaOverlayBgColor(rgb);
+          else if (mediaPicker == 1)
+            Config::setMediaOverlayAccentColor(rgb);
+          else
+            Config::setMediaOverlayTextColor(rgb);
+        }
+      }
+    }
+  }
+  cy += mediaEnabled ? mediaCardH + 48.0f : 114.0f;
 
   drawSectionLabel(cx, cy, "Anticheat", alpha);
   const float acCardH = 262.0f;

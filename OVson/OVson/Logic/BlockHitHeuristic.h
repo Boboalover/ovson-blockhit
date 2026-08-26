@@ -100,6 +100,9 @@ struct Diagnostic {
   bool healthConfirmed = false;
   bool velocityConfirmed = false;
   ResetReason resetReason = ResetReason::WorldChanged;
+  bool attackerBlockingKnown = false;
+  bool attackerBlocking = false;
+  bool attackerHoldingSword = false;
 };
 
 struct Result {
@@ -119,6 +122,9 @@ struct SwingEvent {
   bool isLocalPlayer = false;
   bool teamKnown = false;
   bool sameTeam = false;
+  bool attackerBlockingKnown = false;
+  bool attackerBlocking = false;
+  bool attackerHoldingSword = false;
 };
 
 struct HurtEvent {
@@ -170,6 +176,9 @@ private:
     int entityId = -1;
     double distance = 0.0;
     bool assigned = false;
+    bool attackerBlockingKnown = false;
+    bool attackerBlocking = false;
+    bool attackerHoldingSword = false;
   };
 
   struct Confirmation {
@@ -188,6 +197,9 @@ private:
     double attackerDistance = 0.0;
     bool healthConfirmed = false;
     bool velocityConfirmed = false;
+    bool attackerBlockingKnown = false;
+    bool attackerBlocking = false;
+    bool attackerHoldingSword = false;
   };
 
   bool validateTimestamp(Millis atMs, Result &result);

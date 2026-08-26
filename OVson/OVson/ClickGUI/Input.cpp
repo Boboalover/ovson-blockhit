@@ -1,6 +1,7 @@
 #include "ClickGUI.h"
 #include "State.h"
 #include "ClickGUI_Bridge.h"
+#include "Helpers.h"
 #include "../Render/NotificationManager.h"
 #include "../Config/Config.h"
 #include "../Services/AbyssService.h"
@@ -68,6 +69,9 @@ std::string *activeNativeInput(int &cap) {
 
 void ClickGUI::handleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
   if (!s_open)
+    return;
+
+  if (ClickGUIHelpers::handleEditorMessage(msg, wParam, lParam))
     return;
 
   if (msg == WM_MOUSEWHEEL) {

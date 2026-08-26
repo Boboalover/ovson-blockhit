@@ -45,6 +45,8 @@ set(OVSON_SOURCES
     Logic/NickRoll/NickRollCore.cpp
     Logic/NickRoll/NickRollRuntime.cpp
     Logic/NickRoll/NickScore.cpp
+    Logic/MediaSession.cpp
+    Render/MediaOverlay.cpp
     Logic/BlockHitAudio.cpp
     Logic/BlockHitAudioBackend.cpp
     Logic/BlockHitHeuristic.cpp
@@ -122,6 +124,8 @@ set(OVSON_HEADERS
     Logic/NickRoll/NickRollCore.h
     Logic/NickRoll/NickRollRuntime.h
     Logic/NickRoll/NickScore.h
+    Logic/MediaSession.h
+    Render/MediaOverlay.h
     Logic/BlockHitHeuristic.h
     Logic/BlockHitAudio.h
     Logic/BlockHitAudioBackend.h
@@ -287,6 +291,8 @@ target_include_directories(OVson PRIVATE
 
 target_link_libraries(OVson PRIVATE
     opengl32.lib
+    # C++/WinRT (Windows.Media.Control) for the now-playing overlay.
+    WindowsApp.lib
     ${CMAKE_CURRENT_SOURCE_DIR}/JNI/jvm.lib
     Bcrypt.lib
     Iphlpapi.lib

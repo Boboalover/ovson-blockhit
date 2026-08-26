@@ -15,6 +15,8 @@
 #include "BetterTab.h"
 #include "../ClickGUI/ClickGUI.h"
 #include "BedwarsOverlay.h"
+#include "MediaOverlay.h"
+#include "../Logic/MediaSession.h"
 #include "../Logic/Bedwars/BedwarsRuntime.h"
 #include "../Logic/NickRoll/NickRollRuntime.h"
 #include "DefenseRenderer.h"
@@ -880,6 +882,12 @@ static void renderOverlayWorkBody(HDC hdc) {
 
   runSubsystem("NickRoll::tick", []() { OVson::NickRoll::tick(); });
 
+  runSubsystem("MediaOverlay::render", [hdc]() {
+    GLint vp[4]{};
+    glGetIntegerv(GL_VIEWPORT, vp);
+    Render::MediaOverlay::render(hdc, vp[2], vp[3]);
+  });
+
   runSubsystem("BedwarsOverlay::render", [hdc]() {
     GLint vp[4];
     glGetIntegerv(GL_VIEWPORT, vp);
@@ -1115,6 +1123,8 @@ void RenderHook::uninstall() {
   StatsOverlay::shutdown();
   Render::TechOverlay::shutdown();
   Render::BedwarsOverlay::shutdown();
+  Render::MediaOverlay::shutdown();
+  OVson::Media::shutdown();
 }
 
 bool RenderHook::mustStayLoaded() { return g_mustStayLoaded.load(); }

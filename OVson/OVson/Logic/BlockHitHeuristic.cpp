@@ -176,8 +176,14 @@ Result Detector::observeSwing(const SwingEvent &event) {
     return result;
   }
 
-  swings_.push_back(
-      {nextSequence_++, event.atMs, event.entityId, event.distance, false});
+  swings_.push_back({nextSequence_++,
+                     event.atMs,
+                     event.entityId,
+                     event.distance,
+                     false,
+                     event.attackerBlockingKnown,
+                     event.attackerBlocking,
+                     event.attackerHoldingSword});
   boundDeque(swings_, Rules::MaximumSwings);
   result.add({DiagnosticCode::CandidateAccepted, event.atMs, event.entityId,
               event.distance});
@@ -320,6 +326,9 @@ void Detector::attachBestSwing(Result &) {
   pending_->swingSequence = best->sequence;
   pending_->attackerEntityId = best->entityId;
   pending_->attackerDistance = best->distance;
+  pending_->attackerBlockingKnown = best->attackerBlockingKnown;
+  pending_->attackerBlocking = best->attackerBlocking;
+  pending_->attackerHoldingSword = best->attackerHoldingSword;
 }
 
 void Detector::attachConfirmations(Result &result) {
@@ -421,6 +430,9 @@ Result Detector::evaluate(Millis nowMs) {
                           pending_->attackerDistance};
     diagnostic.healthConfirmed = pending_->healthConfirmed;
     diagnostic.velocityConfirmed = pending_->velocityConfirmed;
+    diagnostic.attackerBlockingKnown = pending_->attackerBlockingKnown;
+    diagnostic.attackerBlocking = pending_->attackerBlocking;
+    diagnostic.attackerHoldingSword = pending_->attackerHoldingSword;
     result.add(diagnostic);
     result.playSound = true;
     lastTriggerAtMs_ = pending_->atMs;

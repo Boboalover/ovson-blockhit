@@ -323,6 +323,14 @@ void playerMonitorTeamAndRangeFiltering() {
   teammate.heldItem.typeName = distant.heldItem.typeName = "bow";
   require(monitor.observe({teammate, distant}, options, 2000).empty(),
           "filtered player produced alert");
+
+  PlayerMonitor includingTeam;
+  options.ignoreOwnTeam = false;
+  teammate.heldItem = {};
+  includingTeam.observe({teammate}, options, 3000);
+  teammate.heldItem.typeName = "bow";
+  require(includingTeam.observe({teammate}, options, 4000).size() == 1,
+          "disabled own-team filter still rejected a confirmed teammate");
 }
 
 void playerMonitorEntityReuseStartsFreshState() {
@@ -436,6 +444,7 @@ void configDefaultsAreDisabled() {
   for (const bool enabled : settings.modules)
     require(!enabled, "module did not default off");
   require(!settings.debug, "debug did not default off");
+  require(settings.ignoreOwnTeam, "own-team filter did not default on");
   // The serialized format addresses modules and HUDs positionally, so a change
   // in either count silently reinterprets every configuration already on disk.
   require(std::size(settings.modules) == 11U,
@@ -469,6 +478,7 @@ void configRoundTripPreservesNamedSettings() {
   settings.debug = !defaults.debug;
   settings.sounds = !defaults.sounds;
   settings.onlyNextEvent = !defaults.onlyNextEvent;
+  settings.ignoreOwnTeam = !defaults.ignoreOwnTeam;
   settings.hud[static_cast<std::size_t>(HudId::Resource)].visible =
       !defaults.resourceHudVisible();
   settings.resources[static_cast<std::size_t>(Resource::Iron)] =
@@ -493,7 +503,7 @@ void configRoundTripPreservesNamedSettings() {
           "item alert key is not named");
 
   const auto decoded = Configuration::deserialize(encoded);
-  require(decoded.formatVersion == 5,
+  require(decoded.formatVersion == 6,
           "serialized configuration did not carry the current format version");
   require(decoded.masterEnabled &&
               decoded.modules[static_cast<std::size_t>(Module::EventTimers)] &&
@@ -502,6 +512,7 @@ void configRoundTripPreservesNamedSettings() {
   require(decoded.debug == settings.debug &&
               decoded.sounds == settings.sounds &&
               decoded.onlyNextEvent == settings.onlyNextEvent &&
+              decoded.ignoreOwnTeam == settings.ignoreOwnTeam &&
               decoded.resourceHudVisible() ==
                   settings.resourceHudVisible() &&
               decoded.shopDuplicatePrevention ==
@@ -1513,6 +1524,13 @@ void mapAliasesFormattingAndUnknownMapsAreConservative() {
   const auto bio = resolveMapHeight("BIO HAZARD");
   require(bio.canonicalName == "Bio-Hazard" && bio.maximumPlacementY == 95,
           "hyphenated map alias failed");
+  const auto sandcastle = resolveMapHeight("sandcastl e");
+  const auto chalk = resolveMapHeight("chalk cli ffs");
+  require(sandcastle.canonicalName == "Sandcastle" &&
+              sandcastle.maximumPlacementY == 102 &&
+              chalk.canonicalName == "Chalk Cliffs" &&
+              chalk.maximumPlacementY == 107,
+          "split scoreboard map names did not recover canonical display names");
   const auto parsed = parseMapScoreboardLine("\xC2\xA7" "aMap:  Trick-or-Yeet ");
   require(parsed && *parsed == "trick or yeet",
           "formatted scoreboard Map line did not parse");
@@ -1570,7 +1588,7 @@ void configRoundTripKeepsEveryHudSlotDistinct() {
   }
   const auto decoded = Configuration::deserialize(
       Configuration::serialize(settings));
-  require(decoded.formatVersion == 5 && decoded.masterEnabled &&
+  require(decoded.formatVersion == 6 && decoded.masterEnabled &&
               decoded.modules[static_cast<std::size_t>(Module::ItemAlerts)] &&
               decoded.visibilityMode == VisibilityMode::CameraView,
           "configuration round trip lost the master, module or visibility "
@@ -1594,7 +1612,7 @@ void configV1MigrationPreservesPreferencesAndPositions() {
       "master=1;eventTimers=1;heightOverlay=1;resourceTracker=1;"
       "resourceHud=1;upgradeHud=1;bedTracker=1;timerX=0.25;timerY=0.35;"
       "timerScale=1.5;heightX=0.45;heightY=0.55;heightScale=1.7;");
-  require(migrated.formatVersion == 5 && migrated.masterEnabled &&
+  require(migrated.formatVersion == 6 && migrated.masterEnabled &&
               migrated.visibilityMode == VisibilityMode::RangeOnly,
           "v1 compatibility defaults failed");
   const auto timer = migrated.hud[static_cast<std::size_t>(HudId::EventTimer)];
@@ -1640,7 +1658,7 @@ void removedRendererConfigKeysAreIgnoredWithoutModuleShifts() {
           "pickupAlerts=1;armorAlerts=1;trapNotifier=1;resourceTracker=1;"
           "itemAlerts=1;upgradeHud=1;antiMisplace=1;bedTracker=1;";
       const auto migrated = Configuration::deserialize(data);
-      require(migrated.formatVersion == 5 &&
+      require(migrated.formatVersion == 6 &&
                   migrated.modules[static_cast<std::size_t>(
                       Module::PickupAlerts)] &&
                   migrated.modules[static_cast<std::size_t>(

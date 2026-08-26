@@ -20,6 +20,11 @@
 namespace OVson::Bedwars {
 namespace {
 
+// A Hypixel match-start announcement can arrive immediately before the
+// server moves the player into the game world. Keep it just long enough to
+// bridge that transition, but never long enough to leak into a later match.
+constexpr Tick kMapAnnouncementLifetimeMs = 20000;
+
 void clearException(JNIEnv *env) {
   if (env && env->ExceptionCheck())
     env->ExceptionClear();
@@ -606,11 +611,24 @@ void Runtime::drainLines(Tick now) {
       const std::string clean = stripFormatting(line.text);
       const std::string normalized = normalizeText(clean);
       if (const auto map = parseMapScoreboardLine(clean)) {
-        if (m_mapName != *map) {
-          m_mapName = *map;
-          m_mapHeight = resolveMapHeight(m_mapName);
+        const MapHeightResolution height = resolveMapHeight(*map);
+        const std::string displayName =
+            height.maximumPlacementY ? height.canonicalName : *map;
+
+        // The pre-game scoreboard is the authoritative map source. Preserve
+        // it across the expected match-start world swap just like the /map
+        // chat response below; otherwise the lifecycle reset clears the name
+        // before the scoreboard line disappears. Refreshing the observation
+        // timestamp while the line remains visible also keeps the short TTL
+        // tied to real, current scoreboard evidence.
+        m_announcedMap = displayName;
+        m_announcedMapObserved = line.received;
+
+        if (m_mapName != displayName) {
+          m_mapName = displayName;
+          m_mapHeight = height;
           if (settings.debug)
-            Logger::info("[Bedwars] map=%s placementLimit=%d source=%s",
+            Logger::info("[Bedwars] map=%s placementLimit=%d source=scoreboard-%s",
                          m_mapName.c_str(),
                          m_mapHeight.maximumPlacementY.value_or(-1),
                          m_mapHeight.overridden ? "override" :
@@ -639,15 +657,14 @@ void Runtime::drainLines(Tick now) {
       continue;
     }
 
-    // Hypixel drops the "Map:" line from the scoreboard the moment the match
-    // starts, so a player who joins late -- or anyone reading the board after
-    // the countdown -- never sees it and the height panel is stuck on "Map
-    // Unknown / Build Unknown". The server announces it in chat instead:
+    // Hypixel drops the "Map:" line from the scoreboard when the match starts.
+    // `/map` supplies a second server-originated source in chat:
     //
     //   You are currently playing on Gelato
     //
-    // That line is present for the whole match, so it is the reliable source
-    // in game and the scoreboard is the one that goes away.
+    // This is a fallback for late joins and manual refreshes; the match-start
+    // flow itself does not consistently emit the line through the incoming
+    // chat hook, so the pre-game scoreboard remains the primary source.
     {
       const std::string plain = stripFormatting(line.text);
       // Lowercased in place rather than through normalizeText, which also
@@ -659,16 +676,20 @@ void Runtime::drainLines(Tick now) {
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
       constexpr char kPhrase[] = "currently playing on";
       const std::size_t at = lowered.find(kPhrase);
-      if (at != std::string::npos) {
-        const std::string tail =
+      if (at != std::string::npos && (g_inHypixelGame || g_inReplay)) {
+        const std::string parsed =
             normalizeMapName(plain.substr(at + sizeof(kPhrase) - 1));
-        if (!tail.empty() && tail.size() <= 64) {
-          // Recorded against the world it was heard in as well, so the
-          // lifecycle reset that lands a tick later cannot erase it.
-          m_announcedMap = tail;
-          m_announcedMapWorld = m_worldToken;
-          m_mapName = tail;
-          m_mapHeight = resolveMapHeight(m_mapName);
+        if (!parsed.empty() && parsed.size() <= 64) {
+          const MapHeightResolution height = resolveMapHeight(parsed);
+          const std::string displayName =
+              height.maximumPlacementY ? height.canonicalName : parsed;
+          // The announcement commonly precedes the match-start world swap.
+          // Record its age instead of the current world identity so that one
+          // expected teleport cannot erase it.
+          m_announcedMap = displayName;
+          m_announcedMapObserved = line.received;
+          m_mapName = displayName;
+          m_mapHeight = height;
           if (settings.debug)
             Logger::info("[Bedwars] map=%s placementLimit=%d source=chat",
                          m_mapName.c_str(),
@@ -867,21 +888,38 @@ void Runtime::tick() {
     m_modeName.clear();
     m_teamCount = 0;
   }
-  // Put the chat announcement back after the reset wiped it. observe() runs
-  // before drainLines() in a tick, so the "match started" reset lands after
-  // the announcement has already been consumed and the server never repeats
-  // it. Guarded on the world token so a stale name from the previous match
-  // can never come back and hand the height panel someone else's build limit,
-  // which would be worse than showing nothing.
-  if (m_mapName.empty() && !m_announcedMap.empty() &&
-      m_announcedMapWorld == m_worldToken) {
-    m_mapName = m_announcedMap;
-    m_mapHeight = resolveMapHeight(m_mapName);
+  // Put a recent announcement back after the lifecycle reset wiped the map.
+  // The server often announces the map immediately before the world identity
+  // changes, so tying this to the old world loses the only in-game map signal.
+  // An explicit game end clears it, and the short lifetime prevents a name
+  // from an abandoned/previous match leaking into a later one.
+  if (transition.gameEnded ||
+      (m_announcedMapObserved != 0 &&
+       (now < m_announcedMapObserved ||
+        now - m_announcedMapObserved > kMapAnnouncementLifetimeMs))) {
+    m_announcedMap.clear();
+    m_announcedMapObserved = 0;
   }
   if (transition.reset || transition.gameStarted || transition.gameEnded)
     resetState(transition.reset
                    ? transition.reason.c_str()
                    : (transition.gameStarted ? "game started" : "game ended"));
+  // resetState clears the cached height resolution, so restore both the name
+  // and its resolved limit only after the lifecycle reset has finished.
+  bool restoredRecentMap = false;
+  if (!transition.gameEnded && m_mapName.empty() &&
+      !m_announcedMap.empty() && m_announcedMapObserved != 0) {
+    m_mapName = m_announcedMap;
+    restoredRecentMap = true;
+  }
+  if (!transition.gameEnded && !m_mapName.empty() &&
+      (restoredRecentMap || transition.reset || transition.gameStarted)) {
+    m_mapHeight = resolveMapHeight(m_mapName);
+    if (settings.debug && restoredRecentMap)
+      Logger::info("[Bedwars] map=%s placementLimit=%d source=recent-server",
+                   m_mapName.c_str(),
+                   m_mapHeight.maximumPlacementY.value_or(-1));
+  }
   if (settings.debug && (transition.reset || transition.gameStarted ||
                          transition.gameEnded)) {
     Logger::info("[Bedwars] lifecycle reset=%d start=%d end=%d reason=%s",
@@ -956,6 +994,7 @@ void Runtime::tick() {
     options.upgrades = settings.enabled(Module::UpgradeAlerts);
     options.consumes = settings.enabled(Module::ConsumeAlerts);
     options.items = settings.enabled(Module::ItemAlerts);
+    options.ignoreOwnTeam = settings.ignoreOwnTeam;
     options.maximumDistance = settings.playerAlertRange;
     options.cooldownMs =
         static_cast<Tick>(Configuration::Fixed::kPlayerAlertCooldownMs);
@@ -978,7 +1017,8 @@ void Runtime::tick() {
          now - m_lastItemDump >= 3000)) {
       m_lastItemDump = now;
       for (const auto &seen : scanned) {
-        if (seen.localPlayer || (seen.teammateKnown && seen.teammate))
+        if (seen.localPlayer ||
+            (settings.ignoreOwnTeam && seen.teammateKnown && seen.teammate))
           continue;
         const ImportantItem classified = classifyImportantItem(seen.heldItem);
         Logger::info(
@@ -1386,7 +1426,7 @@ void Runtime::reset(const char *reason) {
   m_context.reset(reason);
   m_mapName.clear();
   m_announcedMap.clear();
-  m_announcedMapWorld = 0;
+  m_announcedMapObserved = 0;
   m_modeName.clear();
   m_teamCount = 0;
   std::lock_guard<std::mutex> lock(m_snapshotMutex);

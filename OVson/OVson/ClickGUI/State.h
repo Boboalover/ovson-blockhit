@@ -79,11 +79,6 @@ extern bool  s_accentInit;
 
 extern int   s_colorSelectedStat;
 extern bool  s_colorPickerOpen;
-extern float s_cpHue;
-extern float s_cpSat;
-extern float s_cpVal;
-extern bool  s_cpDraggingSV;
-extern bool  s_cpDraggingHue;
 extern char  s_cpMinBuf[16];
 extern char  s_cpMaxBuf[16];
 extern int   s_cpMinLen;

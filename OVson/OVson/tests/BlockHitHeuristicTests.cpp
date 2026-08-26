@@ -126,6 +126,36 @@ void test_attacker_movement_prefers_closest_swing() {
   REQUIRE(found);
 }
 
+void test_confirmed_hit_preserves_attacker_block_state() {
+  auto detector = enabledDetector();
+  auto farther = swing(90, 4.2, 2);
+  farther.attackerBlockingKnown = true;
+  farther.attackerBlocking = false;
+  farther.attackerHoldingSword = false;
+  detector.observeSwing(farther);
+
+  auto closest = swing(100, 3.1, 3);
+  closest.attackerBlockingKnown = true;
+  closest.attackerBlocking = true;
+  closest.attackerHoldingSword = true;
+  detector.observeSwing(closest);
+  detector.observeHurt(hurt(110));
+  const Result result = detector.observeVelocity(120, true, 1, 0, 0);
+
+  bool found = false;
+  for (std::size_t i = 0; i < result.diagnosticCount; ++i) {
+    const Diagnostic &diagnostic = result.diagnostics[i];
+    if (diagnostic.code != DiagnosticCode::SoundTriggered) continue;
+    REQUIRE(diagnostic.entityId == 3);
+    REQUIRE(diagnostic.attackerBlockingKnown);
+    REQUIRE(diagnostic.attackerBlocking);
+    REQUIRE(diagnostic.attackerHoldingSword);
+    REQUIRE(diagnostic.velocityConfirmed);
+    found = true;
+  }
+  REQUIRE(found);
+}
+
 void test_unknown_team_with_strong_evidence() {
   auto detector = enabledDetector();
   auto event = swing(100);
@@ -641,6 +671,7 @@ int main() {
       {"absorption_fallback", test_absorption_fallback},
       {"two_legitimate_hits", test_two_legitimate_hits},
       {"attacker_movement_prefers_closest_swing", test_attacker_movement_prefers_closest_swing},
+      {"confirmed_hit_preserves_attacker_block_state", test_confirmed_hit_preserves_attacker_block_state},
       {"unknown_team_with_strong_evidence", test_unknown_team_with_strong_evidence},
       {"blocking_without_hurt", test_blocking_without_hurt},
       {"hurt_without_blocking", test_hurt_without_blocking},

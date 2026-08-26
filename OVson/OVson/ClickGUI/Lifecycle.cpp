@@ -57,6 +57,7 @@ void ClickGUI::setOpen(bool open) {
     setMouseGrabbed(false);
     FocusFix::setIngameFocus(false);
   } else {
+    ClickGUIHelpers::cancelInlineEditors();
     if (s_typingNickRollTarget) {
       Config::setNickRollTargetWord(s_nickRollTargetInput);
       s_nickRollTargetInput = Config::getNickRollTargetWord();

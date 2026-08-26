@@ -1119,7 +1119,7 @@ PlayerMonitor::observe(const std::vector<PlayerObservation> &players,
       reject(player, PlayerRejectReason::Spectator);
       continue;
     }
-    if (player.teammateKnown && player.teammate) {
+    if (options.ignoreOwnTeam && player.teammateKnown && player.teammate) {
       reject(player, PlayerRejectReason::Teammate);
       continue;
     }

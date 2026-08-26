@@ -1,6 +1,9 @@
 #ifndef _CRT_SECURE_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 #endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include "ClickGUI.h"
 #include "ClickGUI_Bridge.h"
 #include "State.h"
@@ -1256,22 +1259,28 @@ static void renderLayoutB(float mx, float my, bool lClick, bool clickEvent,
 
           if (sb.kind == LbKind::Slider) {
             float sval = sb.fget();
-            char vb[24];
-            if (sb.pct)
-              snprintf(vb, sizeof(vb), "%d%%", (int)(sval * 100.0f + 0.5f));
-            else
-              snprintf(vb, sizeof(vb), "%.1f%s", sval, sb.unit);
             glEnable(GL_TEXTURE_2D);
             g_guiFont.drawString(lx, ry + 8.0f, sb.name,
                                  applyAlpha(textSecondary(), subFade), 0.42f);
-            float vbw = g_guiFont.getStringWidth(vb) * (0.42f / 0.5f);
-            g_guiFont.drawString(rx - vbw, ry + 8.0f, vb,
-                                 applyAlpha(accent(), subFade), 0.42f);
             glDisable(GL_TEXTURE_2D);
 
             bool sch = drawSlider(sid, lx, ry + 28.0f, rx - lx, 8.0f, sval,
                                   sb.fmin, sb.fmax, mx, my,
                                   lClick && isHit && inVisibleArea, subFade);
+            glEnable(GL_TEXTURE_2D);
+            float displayed = sb.pct ? sval * 100.0f : sval;
+            const float displayMin = sb.pct ? sb.fmin * 100.0f : sb.fmin;
+            const float displayMax = sb.pct ? sb.fmax * 100.0f : sb.fmax;
+            const char *unit = sb.pct ? "%" : sb.unit;
+            const bool typed = drawNumericInput(
+                sid, rx - 62.0f, ry + 1.0f, 62.0f, 25.0f, displayed,
+                displayMin, displayMax, sb.pct ? 0 : 1, unit, mx, my,
+                clickEvent && isHit && inVisibleArea, subFade);
+            glDisable(GL_TEXTURE_2D);
+            if (typed) {
+              sval = sb.pct ? displayed / 100.0f : displayed;
+              sch = true;
+            }
             if (sch) sb.fset(sval);
             ry += subHeight;
             continue;
@@ -1720,6 +1729,36 @@ void ClickGUI::render(HDC hdc) {
     return;
   }
 
+  constexpr float kMinGuiWidth = 640.0f;
+  constexpr float kMinGuiHeight = 520.0f;
+  constexpr float kScreenMargin = 8.0f;
+  static bool geometryLoaded = false;
+  static int resizeEdges = 0; // 1=left, 2=right, 4=top, 8=bottom
+  static float resizeMouseX = 0.0f, resizeMouseY = 0.0f;
+  static float resizeX = 0.0f, resizeY = 0.0f;
+  static float resizeW = 0.0f, resizeH = 0.0f;
+  if (!geometryLoaded) {
+    g_x = Config::getClickGuiX();
+    g_y = Config::getClickGuiY();
+    g_w = Config::getClickGuiWidth();
+    g_h = Config::getClickGuiHeight();
+    geometryLoaded = true;
+  }
+
+  // Keep the complete window reachable after a resolution change. On very
+  // small clients the screen itself becomes the upper bound, while ordinary
+  // resolutions retain a useful minimum layout size.
+  const float maximumW = (std::max)(320.0f, sw - kScreenMargin * 2.0f);
+  const float maximumH = (std::max)(300.0f, sh - kScreenMargin * 2.0f);
+  const float minimumW = (std::min)(kMinGuiWidth, maximumW);
+  const float minimumH = (std::min)(kMinGuiHeight, maximumH);
+  g_w = std::clamp(g_w, minimumW, maximumW);
+  g_h = std::clamp(g_h, minimumH, maximumH);
+  g_x = std::clamp(g_x, kScreenMargin,
+                   (std::max)(kScreenMargin, sw - g_w - kScreenMargin));
+  g_y = std::clamp(g_y, kScreenMargin,
+                   (std::max)(kScreenMargin, sh - g_h - kScreenMargin));
+
   DWORD dim = (style() == Style::LiquidGlass) ? 0x00000000 : 0xB0000000;
   if (dim != 0) {
     RenderUtils::drawRect(0, 0, sw, sh, applyAlpha(dim, s_animAlpha));
@@ -1735,16 +1774,75 @@ void ClickGUI::render(HDC hdc) {
   glTranslatef(-centerX, -centerY, 0);
 
   if (s_open && s_animAlpha >= 0.95f) {
-    if (lClick) {
-      if (!s_dragging) {
-        if (isHovered(mx, my, g_x, g_y, g_w, 60)) {
-          s_dragging = true;
-          s_dragOffsetX = mx - g_x;
-          s_dragOffsetY = my - g_y;
-        }
+    constexpr float edgeHit = 7.0f;
+    const bool insideExpanded =
+        isHovered(mx, my, g_x - edgeHit, g_y - edgeHit,
+                  g_w + edgeHit * 2.0f, g_h + edgeHit * 2.0f);
+    const bool nearLeft = insideExpanded && std::fabs(mx - g_x) <= edgeHit;
+    const bool nearRight =
+        insideExpanded && std::fabs(mx - (g_x + g_w)) <= edgeHit;
+    const bool nearTop = insideExpanded && std::fabs(my - g_y) <= edgeHit;
+    const bool nearBottom =
+        insideExpanded && std::fabs(my - (g_y + g_h)) <= edgeHit;
+
+    if (clickEvent && resizeEdges == 0 && !s_dragging &&
+        (nearLeft || nearRight || nearTop || nearBottom)) {
+      resizeEdges = (nearLeft ? 1 : 0) | (nearRight ? 2 : 0) |
+                    (nearTop ? 4 : 0) | (nearBottom ? 8 : 0);
+      resizeMouseX = mx;
+      resizeMouseY = my;
+      resizeX = g_x;
+      resizeY = g_y;
+      resizeW = g_w;
+      resizeH = g_h;
+      clickEvent = false;
+    }
+
+    if (resizeEdges != 0) {
+      if (!lClick) {
+        resizeEdges = 0;
       } else {
-        g_x = mx - s_dragOffsetX;
-        g_y = my - s_dragOffsetY;
+        const float dx = mx - resizeMouseX;
+        const float dy = my - resizeMouseY;
+        const float originalRight = resizeX + resizeW;
+        const float originalBottom = resizeY + resizeH;
+        if (resizeEdges & 1) {
+          g_x = std::clamp(resizeX + dx, kScreenMargin,
+                           originalRight - minimumW);
+          g_w = originalRight - g_x;
+        } else if (resizeEdges & 2) {
+          g_w = std::clamp(resizeW + dx, minimumW,
+                           sw - kScreenMargin - resizeX);
+        }
+        if (resizeEdges & 4) {
+          g_y = std::clamp(resizeY + dy, kScreenMargin,
+                           originalBottom - minimumH);
+          g_h = originalBottom - g_y;
+        } else if (resizeEdges & 8) {
+          g_h = std::clamp(resizeH + dy, minimumH,
+                           sh - kScreenMargin - resizeY);
+        }
+        Config::setClickGuiBounds(g_x, g_y, g_w, g_h);
+        clickEvent = false;
+      }
+    } else if (lClick) {
+      if (!s_dragging && clickEvent &&
+          isHovered(mx, my, g_x + edgeHit, g_y + edgeHit,
+                    g_w - edgeHit * 2.0f, 60.0f - edgeHit) &&
+          mx < g_x + g_w - 54.0f) {
+        s_dragging = true;
+        s_dragOffsetX = mx - g_x;
+        s_dragOffsetY = my - g_y;
+        clickEvent = false;
+      } else if (s_dragging) {
+        g_x = std::clamp(mx - s_dragOffsetX, kScreenMargin,
+                         (std::max)(kScreenMargin,
+                                  sw - g_w - kScreenMargin));
+        g_y = std::clamp(my - s_dragOffsetY, kScreenMargin,
+                         (std::max)(kScreenMargin,
+                                  sh - g_h - kScreenMargin));
+        Config::setClickGuiBounds(g_x, g_y, g_w, g_h);
+        clickEvent = false;
       }
     } else {
       s_dragging = false;
@@ -1759,6 +1857,30 @@ void ClickGUI::render(HDC hdc) {
 
   drawThemePanel(mainX, mainY, g_w, g_h, s_animAlpha);
   drawThemeSidebar(mainX, mainY, sidebarW, g_h, s_animAlpha);
+
+  // Small diagonal grip: enough to advertise resizing without adding a
+  // permanent label or stealing space from any tab.
+  glDisable(GL_TEXTURE_2D);
+  glEnable(GL_LINE_SMOOTH);
+  glLineWidth(1.4f);
+  const DWORD grip = applyAlpha(
+      isHovered(mx, my, mainX + g_w - 22.0f, mainY + g_h - 22.0f,
+                22.0f, 22.0f)
+          ? accent()
+          : textMuted(),
+      s_animAlpha);
+  glColor4ub(static_cast<GLubyte>((grip >> 16) & 0xFF),
+             static_cast<GLubyte>((grip >> 8) & 0xFF),
+             static_cast<GLubyte>(grip & 0xFF),
+             static_cast<GLubyte>((grip >> 24) & 0xFF));
+  glBegin(GL_LINES);
+  glVertex2f(mainX + g_w - 15.0f, mainY + g_h - 5.0f);
+  glVertex2f(mainX + g_w - 5.0f, mainY + g_h - 15.0f);
+  glVertex2f(mainX + g_w - 9.0f, mainY + g_h - 5.0f);
+  glVertex2f(mainX + g_w - 5.0f, mainY + g_h - 9.0f);
+  glEnd();
+  glDisable(GL_LINE_SMOOTH);
+  glEnable(GL_TEXTURE_2D);
 
   RenderUtils::drawRect(mainX + sidebarW, mainY + 60, g_w - sidebarW, 1,
                         applyAlpha(0x18FFFFFF, s_animAlpha));
@@ -1861,7 +1983,8 @@ void ClickGUI::render(HDC hdc) {
   }
 
   const float tabStartY = 96.0f;
-  const float tabRowH = 48.0f;
+  const float tabRowH =
+      std::clamp((g_h - tabStartY - 94.0f) / 9.0f, 36.0f, 48.0f);
   float targetY = tabStartY + (s_targetTab * tabRowH);
   s_tabIndicatorY += (targetY - s_tabIndicatorY) * 0.22f;
 
@@ -1931,6 +2054,7 @@ void ClickGUI::render(HDC hdc) {
     if (clickEvent && hover) {
       s_targetTab = i;
       s_isDropdownOpen = false;
+      ClickGUIHelpers::cancelInlineEditors();
     }
     ty += tabRowH;
   }
@@ -2098,4 +2222,3 @@ void ClickGUI::resetLayoutB() {
 }
 
 } // namespace Render
-

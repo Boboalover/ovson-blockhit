@@ -104,6 +104,35 @@ void setBlockHitSoundVolume(float volumePercent);
 bool isBlockHitWaitForServerEnabled();
 void setBlockHitWaitForServerEnabled(bool enabled);
 
+// Now-playing overlay. Reads whatever Windows' media session reports -- Spotify,
+// a browser tab, any player that registers a transport session. Position is
+// stored normalised (0..1) so it survives a resolution change.
+bool isMediaOverlayEnabled();
+void setMediaOverlayEnabled(bool enabled);
+float getMediaOverlayX();
+void setMediaOverlayX(float x);
+float getMediaOverlayY();
+void setMediaOverlayY(float y);
+float getMediaOverlayScale();
+void setMediaOverlayScale(float scale);
+// 0 = wide landscape card, 1 = compact portrait card.
+int getMediaOverlayLayout();
+void setMediaOverlayLayout(int layout);
+// Card appearance. Colours are stored as 0xRRGGBB; opacity is separate so the
+// background can be tinted and faded independently.
+unsigned long getMediaOverlayBgColor();
+void setMediaOverlayBgColor(unsigned long rgb);
+unsigned long getMediaOverlayAccentColor();
+void setMediaOverlayAccentColor(unsigned long rgb);
+unsigned long getMediaOverlayTextColor();
+void setMediaOverlayTextColor(unsigned long rgb);
+float getMediaOverlayOpacity();
+void setMediaOverlayOpacity(float opacity);
+float getMediaOverlayCorner();
+void setMediaOverlayCorner(float radius);
+bool isMediaOverlayArtEnabled();
+void setMediaOverlayArtEnabled(bool enabled);
+
 // /nick book scoring alerts. The scorer's fitted weights are intentionally
 // fixed; only the pass line and notification behavior are user-configurable.
 int getNickScoreThreshold();
@@ -195,6 +224,11 @@ const std::string &getClickGuiTheme();
 void setClickGuiTheme(const std::string &theme);
 const std::string &getClickGuiLayout();
 void setClickGuiLayout(const std::string &layout);
+float getClickGuiX();
+float getClickGuiY();
+float getClickGuiWidth();
+float getClickGuiHeight();
+void setClickGuiBounds(float x, float y, float width, float height);
 const std::string &getLayoutBData();
 void setLayoutBData(const std::string &data);
 const std::string &getBedwarsSettingsData();

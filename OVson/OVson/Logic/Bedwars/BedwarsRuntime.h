@@ -92,7 +92,7 @@ private:
   // server never says it again. This copy survives that, and is tied to the
   // world it was heard in so it can never resurrect the previous map.
   std::string m_announcedMap;
-  std::uintptr_t m_announcedMapWorld = 0;
+  Tick m_announcedMapObserved = 0;
   int m_teamCount = 0;
   double m_playerX = 0.0;
   double m_playerY = 0.0;

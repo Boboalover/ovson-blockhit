@@ -27,12 +27,15 @@ inline constexpr int kMaximumVisibleNotifications = 5;
 
 struct Settings {
   Settings();
-  int formatVersion = 5;
+  int formatVersion = 6;
   bool masterEnabled = false;
   std::array<bool, kModuleCount> modules{};
   bool debug = false;
   bool sounds = true;
   bool onlyNextEvent = true;
+  // When enabled, players confirmed to share the local team are excluded
+  // from enemy equipment/consume alerts. Unknown teams remain observable.
+  bool ignoreOwnTeam = true;
   // The resource HUD's visibility lives in hud[HudId::Resource] and nowhere
   // else. It used to also have its own bool here, and the two could disagree
   // -- deserialize() overwrote the bool from the HUD slot at the end, so any
@@ -71,6 +74,8 @@ bool areSoundsEnabled();
 void setSoundsEnabled(bool enabled);
 bool isOnlyNextEvent();
 void setOnlyNextEvent(bool enabled);
+bool isIgnoringOwnTeam();
+void setIgnoreOwnTeam(bool enabled);
 bool isResourceHudEnabled();
 void setResourceHudEnabled(bool enabled);
 bool isResourceEnabled(Resource resource);

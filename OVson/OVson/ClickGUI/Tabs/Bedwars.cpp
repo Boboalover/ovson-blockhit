@@ -112,17 +112,17 @@ void renderBedwars(TabCtx &ctx) {
     float changedValue = value;
     // The readout sits at the right edge, so the track stops short of it
     // instead of running underneath the digits.
-    const bool changed = drawSlider(
+    bool changed = drawSlider(
         sliderId, textX + 140.0F, cy + 14.0F,
-        std::max(70.0F, rowW - 215.0F), 6.0F, changedValue, minimum, maximum,
+        std::max(70.0F, rowW - 225.0F), 6.0F, changedValue, minimum, maximum,
         ctx.mx, ctx.my, ctx.lClick, ctx.alpha);
     glEnable(GL_TEXTURE_2D);
-    char number[40]{};
-    std::snprintf(number, sizeof(number), "%.0f%s", value, suffix);
+    changed = drawNumericInput(sliderId, rowX + rowW - 66.0F, cy - 1.0F,
+                               58.0F, 26.0F, changedValue, minimum, maximum,
+                               0, suffix, ctx.mx, ctx.my, ctx.clickEvent,
+                               alpha) || changed;
     g_guiFont.drawString(textX, cy + 2.0F, title,
                          applyAlpha(0xFFFFFFFF, alpha), 0.42F);
-    g_guiFont.drawString(rowX + rowW - 58.0F, cy + 2.0F, number,
-                         applyAlpha(0xFF8FD6FF, alpha), 0.38F);
     if (changed)
       setter(changedValue);
     cy += 48.0F;
@@ -288,6 +288,10 @@ void renderBedwars(TabCtx &ctx) {
 
   // ---- Alerts --------------------------------------------------------------
   if (group(2, "Alerts", "Who counts as visible, and how far")) {
+    toggleRow("Ignore Your Team",
+              "Skip teammates after their team color is known",
+              settings.ignoreOwnTeam, 506, true, true,
+              [](bool enabled) { BwConfig::setIgnoreOwnTeam(enabled); });
     const char *visibility =
         settings.visibilityMode == VisibilityMode::RangeOnly
             ? "Range Only"
