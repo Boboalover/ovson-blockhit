@@ -312,7 +312,8 @@ set_target_properties(OVson PROPERTIES
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
 )
 
-if(OVSON_BUILD_TESTS AND BUILD_TESTING)
+if(OVSON_BUILD_TESTS AND BUILD_TESTING
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
     add_executable(OVsonBedwarsTests
         Logic/Bedwars/BedwarsConfig.cpp
         Logic/Bedwars/BedwarsConfig.h
