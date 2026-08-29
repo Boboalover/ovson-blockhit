@@ -295,6 +295,17 @@ void setAlertOutput(AlertOutput output) {
   });
 }
 
+HeightDisplay getHeightDisplay() { return get().heightDisplay; }
+void setHeightDisplay(HeightDisplay display) {
+  mutate([&](Settings &settings) {
+    const auto value = static_cast<std::size_t>(display);
+    settings.heightDisplay =
+        value <= static_cast<std::size_t>(HeightDisplay::Limit)
+            ? display
+            : HeightDisplay::Ratio;
+  });
+}
+
 VisibilityMode getVisibilityMode() { return get().visibilityMode; }
 void setVisibilityMode(VisibilityMode mode) {
   mutate([&](Settings &settings) {
@@ -354,6 +365,7 @@ std::string serialize(const Settings &settings) {
       << ";trapReminderSeconds=" << settings.trapReminderSeconds
       << ";visibilityMode=" << static_cast<int>(settings.visibilityMode)
       << ";alertOutput=" << static_cast<int>(settings.alertOutput)
+      << ";heightDisplay=" << static_cast<int>(settings.heightDisplay)
       << ';';
   for (std::size_t i = 1; i < kImportantItemCount; ++i) {
     const char *key = importantItemKey(static_cast<ImportantItem>(i));
@@ -429,6 +441,10 @@ Settings deserialize(const std::string &data) {
       readInt(pairs, "alertOutput", static_cast<int>(AlertOutput::Overlay),
               static_cast<int>(AlertOutput::Overlay),
               static_cast<int>(AlertOutput::Both)));
+  settings.heightDisplay = static_cast<HeightDisplay>(
+      readInt(pairs, "heightDisplay", static_cast<int>(HeightDisplay::Ratio),
+              static_cast<int>(HeightDisplay::Ratio),
+              static_cast<int>(HeightDisplay::Limit)));
   for (std::size_t i = 0; i < kHudCount; ++i) {
     const std::string prefix = "hud" + std::to_string(i);
     settings.hud[i].visible =

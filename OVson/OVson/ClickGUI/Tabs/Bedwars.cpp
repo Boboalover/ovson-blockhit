@@ -408,6 +408,12 @@ void renderBedwars(TabCtx &ctx) {
                         " from the built-in map table"
                   : "Unknown map; set a manual limit below",
               false, []() {});
+    cycleRow("Height Readout", heightDisplayName(settings.heightDisplay),
+             "Y over the ceiling, blocks left, or the ceiling alone", [&]() {
+               const int next =
+                   (static_cast<int>(BwConfig::getHeightDisplay()) + 1) % 4;
+               BwConfig::setHeightDisplay(static_cast<HeightDisplay>(next));
+             });
     sliderRow("Manual Build Limit",
               static_cast<float>(settings.heightLimitOverride), 0.0F, 511.0F,
               770, "", [](float value) {

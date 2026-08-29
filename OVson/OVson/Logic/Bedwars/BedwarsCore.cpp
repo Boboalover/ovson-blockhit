@@ -825,6 +825,15 @@ const char *alertOutputName(AlertOutput output) {
   }
 }
 
+const char *heightDisplayName(HeightDisplay display) {
+  switch (display) {
+  case HeightDisplay::RatioRemaining: return "Y / Limit + Left";
+  case HeightDisplay::Remaining: return "Blocks Left";
+  case HeightDisplay::Limit: return "Limit Only";
+  default: return "Y / Limit";
+  }
+}
+
 const char *visibilityModeName(VisibilityMode mode) {
   switch (mode) {
   case VisibilityMode::RangeOnly: return "Range Only";

@@ -1139,18 +1139,39 @@ void Runtime::rebuildSnapshot(Tick now, double playerY) {
     const int currentY = std::isfinite(playerY)
                              ? static_cast<int>(std::floor(playerY))
                              : 0;
-    snapshot.heightLine = "Y " + std::to_string(currentY) + "  Map " +
-                          (m_mapName.empty() ? "Unknown" : m_mapName);
-    if (height.maximumPlacementY) {
+    // Reads maximumPlayerY, not maximumPlacementY + 1. The table carries both
+    // -- the player-feet ceiling and the highest placeable block one below it
+    // -- so deriving one from the other here would duplicate a fact and drift
+    // the moment somebody corrects a single row.
+    const std::string ceiling =
+        height.maximumPlayerY ? std::to_string(*height.maximumPlayerY)
+                              : std::string("?");
+    // Counted against the same ceiling that is displayed, so the number and
+    // the urgency colour can never disagree with each other.
+    const std::string left =
+        height.maximumPlayerY
+            ? std::to_string(std::max(0, *height.maximumPlayerY - currentY))
+            : std::string("?");
+    switch (settings.heightDisplay) {
+    case HeightDisplay::RatioRemaining:
+      snapshot.heightLine =
+          std::to_string(currentY) + "/" + ceiling + "  " + left;
+      break;
+    case HeightDisplay::Remaining:
+      snapshot.heightLine = left;
+      break;
+    case HeightDisplay::Limit:
+      snapshot.heightLine = ceiling;
+      break;
+    default:
+      snapshot.heightLine = std::to_string(currentY) + "/" + ceiling;
+      break;
+    }
+    if (height.maximumPlacementY)
       snapshot.maximumPlacementY = *height.maximumPlacementY;
-      const int remaining =
-          std::max(0, *height.maximumPlacementY - currentY);
-      snapshot.heightLine += "  Build " +
-                             std::to_string(*height.maximumPlacementY) +
-                             "  Remaining " + std::to_string(remaining);
+    if (height.maximumPlayerY) {
+      const int remaining = std::max(0, *height.maximumPlayerY - currentY);
       snapshot.heightUrgency = remaining <= 5 ? 2 : remaining <= 15 ? 1 : 0;
-    } else {
-      snapshot.heightLine += "  Build Unknown";
     }
   }
 

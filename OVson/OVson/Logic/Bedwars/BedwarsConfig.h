@@ -54,6 +54,7 @@ struct Settings {
   int trapReminderSeconds = 90;
   VisibilityMode visibilityMode = VisibilityMode::LineOfSight;
   AlertOutput alertOutput = AlertOutput::Overlay;
+  HeightDisplay heightDisplay = HeightDisplay::Ratio;
   std::array<HudLayout, kHudCount> hud{};
 
   bool enabled(Module module) const;
@@ -104,6 +105,8 @@ VisibilityMode getVisibilityMode();
 void setVisibilityMode(VisibilityMode mode);
 AlertOutput getAlertOutput();
 void setAlertOutput(AlertOutput output);
+HeightDisplay getHeightDisplay();
+void setHeightDisplay(HeightDisplay display);
 HudLayout getHudLayout(HudId hud);
 void setHudLayout(HudId hud, const HudLayout &layout);
 void resetHudLayout(HudId hud);

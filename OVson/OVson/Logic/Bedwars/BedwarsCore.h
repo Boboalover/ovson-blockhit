@@ -366,6 +366,11 @@ enum class VisibilityMode { RangeOnly, LineOfSight, CameraView };
 // leaves a scrollback you can check after a fight.
 enum class AlertOutput { Overlay, Chat, Both };
 const char *alertOutputName(AlertOutput output);
+// What the height HUD prints. The ceiling shown is always maximumPlayerY --
+// the Y your feet reach standing on the highest legal block -- so the two
+// numbers meeting means you are at the cap.
+enum class HeightDisplay { Ratio, RatioRemaining, Remaining, Limit };
+const char *heightDisplayName(HeightDisplay display);
 enum class PlayerRejectReason {
   None,
   LocalPlayer,
